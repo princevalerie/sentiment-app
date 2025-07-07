@@ -31,19 +31,21 @@ st.set_page_config(
     layout="wide"
 )
 
-# Language configuration
+# Language configuration with updated Indonesian model
 LANGUAGES = {
     'id': {
         'name': 'Bahasa Indonesia',
         'flag': '🇮🇩',
-        'model': 'w11wo/indobert-sentiment-classifier',
-        'gemini_model': 'gemini-2.0-flash-exp'
+        'model': 'mdhugol/indonesia-bert-sentiment-classification',  # Updated working model
+        'gemini_model': 'gemini-2.0-flash-exp',
+        'label_mapping': {'LABEL_0': 'positif', 'LABEL_1': 'netral', 'LABEL_2': 'negatif'}
     },
     'en': {
         'name': 'English',
         'flag': '🇺🇸',
         'model': 'cardiffnlp/twitter-roberta-base-sentiment-latest',
-        'gemini_model': 'gemini-2.0-flash-exp'
+        'gemini_model': 'gemini-2.0-flash-exp',
+        'label_mapping': {'LABEL_0': 'negatif', 'LABEL_1': 'netral', 'LABEL_2': 'positif'}
     }
 }
 
@@ -235,18 +237,11 @@ def load_sentiment_model(language):
     try:
         model_name = LANGUAGES[language]['model']
         with st.spinner(f"Loading {language.upper()} AI model..."):
-            if language == 'id':
-                classifier = pipeline(
-                    "sentiment-analysis", 
-                    model=model_name,
-                    return_all_scores=True
-                )
-            else:  # English
-                classifier = pipeline(
-                    "sentiment-analysis", 
-                    model=model_name,
-                    return_all_scores=True
-                )
+            classifier = pipeline(
+                "sentiment-analysis", 
+                model=model_name,
+                return_all_scores=True
+            )
         return classifier
     except Exception as e:
         st.error(f"Error loading model: {str(e)}")
@@ -384,58 +379,10 @@ def comprehensive_text_preprocessing(text: str,
     
     return text
 
-# Fungsi untuk analisis kualitas preprocessing
-def analyze_preprocessing_quality(original_texts: List[str], 
-                                processed_texts: List[str]) -> Dict[str, Any]:
-    """Analisis kualitas preprocessing"""
-    
-    original_lengths = [len(text.split()) for text in original_texts if text]
-    processed_lengths = [len(text.split()) for text in processed_texts if text]
-    
-    avg_original_length = np.mean(original_lengths) if original_lengths else 0
-    avg_processed_length = np.mean(processed_lengths) if processed_lengths else 0
-    
-    reduction_ratio = (avg_original_length - avg_processed_length) / avg_original_length if avg_original_length > 0 else 0
-    
-    # Hitung vocabulary size
-    original_vocab = set()
-    processed_vocab = set()
-    
-    for text in original_texts:
-        if text:
-            original_vocab.update(text.lower().split())
-    
-    for text in processed_texts:
-        if text:
-            processed_vocab.update(text.split())
-    
-    return {
-        'avg_original_length': avg_original_length,
-        'avg_processed_length': avg_processed_length,
-        'length_reduction_ratio': reduction_ratio,
-        'original_vocabulary_size': len(original_vocab),
-        'processed_vocabulary_size': len(processed_vocab),
-        'vocabulary_reduction_ratio': (len(original_vocab) - len(processed_vocab)) / len(original_vocab) if len(original_vocab) > 0 else 0
-    }
-
 # Fungsi untuk mapping label sentiment
 def map_sentiment_label(label: str, language: str) -> str:
     """Map label dari model ke format yang diinginkan"""
-    if language == 'id':
-        label_mapping = {
-            'POSITIVE': 'positif',
-            'NEGATIVE': 'negatif',
-            'NEUTRAL': 'netral'
-        }
-    else:  # English
-        label_mapping = {
-            'LABEL_0': 'negatif',  # RoBERTa model labels
-            'LABEL_1': 'netral',
-            'LABEL_2': 'positif',
-            'POSITIVE': 'positif',
-            'NEGATIVE': 'negatif',
-            'NEUTRAL': 'netral'
-        }
+    label_mapping = LANGUAGES[language]['label_mapping']
     return label_mapping.get(label, 'netral')
 
 # Fungsi untuk analisis sentiment
@@ -489,6 +436,7 @@ def generate_summary_with_gemini(model, sentiment_counts: Dict, wordcloud_images
     try:
         if not model:
             return "Error: Gemini model not initialized"
+        
         # Convert matplotlib figures to PIL images for Gemini
         image_parts = []
         for sentiment, fig in wordcloud_images.items():
@@ -765,8 +713,7 @@ def main():
             # Pilih kolom untuk analisis
             selected_columns = st.multiselect(
                 get_text('select_cols'),
-                options=text_columns,
-                default=text_columns,
+                text_columns,
                 help=get_text('select_cols_help')
             )
             
@@ -774,131 +721,151 @@ def main():
                 st.warning(get_text('select_warning'))
                 return
             
-            # Tombol untuk mulai analisis
-            if st.button(get_text('start_analysis'), type="primary"):
-                st.write(get_text('processing_text'))
-                
-                # Kombinasi teks dari semua kolom yang dipilih
-                combined_texts = []
-                for idx, row in df.iterrows():
-                    row_text = ""
+            # Start analysis button
+            if st.button(get_text('start_analysis')):
+                with st.spinner(get_text('processing_text')):
+                    # Process each selected column
+                    all_texts = []
                     for col in selected_columns:
-                        if pd.notna(row[col]):
-                            row_text += f" {row[col]}"
+                        texts = df[col].astype(str).tolist()
+                        # Preprocess texts
+                        processed_texts = [
+                            comprehensive_text_preprocessing(
+                                text[:max_length],
+                                language=st.session_state.language,
+                                stemmer=stemmer,
+                                stopword_remover=stopword_remover,
+                                english_stopwords=english_stopwords,
+                                porter_stemmer=porter_stemmer,
+                                **preprocess_options,
+                                min_word_length=min_word_length
+                            ) for text in texts
+                        ]
+                        all_texts.extend([text for text in processed_texts if text])
                     
-                    # Preprocessing teks
-                    cleaned_text = comprehensive_text_preprocessing(
-                        row_text.strip(),
-                        language=st.session_state.language,
-                        stemmer=stemmer,
-                        stopword_remover=stopword_remover,
-                        english_stopwords=english_stopwords,
-                        porter_stemmer=porter_stemmer,
-                        **preprocess_options,
-                        min_word_length=min_word_length
-                    )
+                    if not all_texts:
+                        st.error(get_text('no_valid_text'))
+                        return
                     
-                    if cleaned_text:
-                        # Potong teks jika terlalu panjang
-                        if len(cleaned_text) > max_length:
-                            cleaned_text = cleaned_text[:max_length]
-                        combined_texts.append(cleaned_text)
-                
-                if not combined_texts:
-                    st.error(get_text('no_valid_text'))
-                    return
-                
-                # Analisis sentiment
-                with st.spinner(get_text('analyzing_text').format(count=len(combined_texts))):
-                    results = analyze_sentiment(classifier, combined_texts, st.session_state.language)
-                
-                if not results:
-                    st.error(get_text('analysis_failed'))
-                    return
-                
-                # Buat dataframe hasil
-                results_df = pd.DataFrame(results)
-                
-                # Filter berdasarkan confidence threshold
-                filtered_results = results_df[results_df['confidence'] >= min_confidence]
-                
-                if len(filtered_results) == 0:
-                    st.warning(get_text('no_results').format(threshold=min_confidence))
-                    filtered_results = results_df
-                
-                # Hitung distribusi sentiment
-                sentiment_counts = Counter(filtered_results['sentiment'])
-                
-                # Tampilkan hasil
-                st.header(get_text('results_header'))
-                
-                # Pie chart untuk distribusi sentiment
-                st.subheader(get_text('sentiment_dist'))
-                fig_pie = create_sentiment_chart(sentiment_counts)
-                st.plotly_chart(fig_pie, use_container_width=True)
-                
-                # Word clouds
-                st.subheader(get_text('wordcloud_header'))
-                
-                # Buat tabs untuk setiap sentiment
-                tabs = st.tabs([
-                    f"Positif ({sentiment_counts.get('positif', 0)})", 
-                    f"Negatif ({sentiment_counts.get('negatif', 0)})", 
-                    f"Netral ({sentiment_counts.get('netral', 0)})"
-                ])
-                
-                sentiments = ['positif', 'negatif', 'netral']
-                wordcloud_images = {}
-                
-                for i, (tab, sentiment) in enumerate(zip(tabs, sentiments)):
-                    with tab:
-                        # Filter teks berdasarkan sentiment
-                        sentiment_texts = filtered_results[
-                            filtered_results['sentiment'] == sentiment
-                        ]['text'].tolist()
+                    # Show preprocessing examples
+                    with st.expander(get_text('preprocessing_results')):
+                        st.subheader(get_text('preprocessing_examples'))
+                        for i, (original, processed) in enumerate(zip(texts[:5], processed_texts[:5])):
+                            st.markdown(f"**Original {i+1}:** {original}")
+                            st.markdown(f"**Processed {i+1}:** {processed}")
+                            st.markdown("---")
+                    
+                    # Analyze sentiment
+                    with st.spinner(get_text('analyzing_text').format(count=len(all_texts))):
+                        results = analyze_sentiment(classifier, all_texts, st.session_state.language)
                         
-                        if sentiment_texts:
-                            try:
-                                fig_wc = create_wordcloud(sentiment_texts, sentiment)
-                                if fig_wc:
-                                    wordcloud_images[sentiment] = fig_wc
-                                    st.pyplot(fig_wc)
-                                    plt.close(fig_wc)
-                                else:
-                                    st.info(f"Tidak cukup teks untuk membuat wordcloud {sentiment}")
-                            except Exception as e:
-                                st.warning(f"Tidak dapat membuat wordcloud untuk {sentiment}: {str(e)}")
-                        else:
-                            st.info(f"Tidak ada teks dengan sentiment {sentiment}")
-                
-                # Gemini AI Summary
-                if gemini_model:
-                    st.subheader(get_text('ai_insights'))
-                    
-                    with st.spinner(get_text('generating_insights')):
-                        summary = generate_summary_with_gemini(
-                            gemini_model, 
-                            sentiment_counts, 
-                            wordcloud_images,
-                            st.session_state.language
+                        # Convert results to DataFrame
+                        results_df = pd.DataFrame(results)
+                        
+                        # Filter by confidence
+                        results_df = results_df[results_df['confidence'] >= min_confidence]
+                        
+                        if len(results_df) == 0:
+                            st.warning(get_text('no_results').format(threshold=min_confidence))
+                            return
+                        
+                        # Calculate sentiment counts
+                        sentiment_counts = results_df['sentiment'].value_counts().to_dict()
+                        
+                        # Display results
+                        st.header(get_text('results_header'))
+                        
+                        # Metrics
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric(get_text('total_reviews'), len(results_df))
+                        with col2:
+                            st.metric(get_text('positive'), sentiment_counts.get('positif', 0))
+                        with col3:
+                            st.metric(get_text('negative'), sentiment_counts.get('negatif', 0))
+                        with col4:
+                            st.metric(get_text('neutral'), sentiment_counts.get('netral', 0))
+                        
+                        # Visualizations
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.subheader(get_text('sentiment_dist'))
+                            sentiment_chart = create_sentiment_chart(sentiment_counts)
+                            st.plotly_chart(sentiment_chart, use_container_width=True)
+                        
+                        with col2:
+                            st.subheader(get_text('confidence_dist'))
+                            confidence_chart = create_confidence_chart(results_df)
+                            st.plotly_chart(confidence_chart, use_container_width=True)
+                        
+                        # Generate AI Insights if Gemini is available
+                        if gemini_model:
+                            st.header(get_text('ai_insights'))
+                            with st.spinner(get_text('generating_insights')):
+                                # Create word clouds for each sentiment
+                                wordcloud_images = {}
+                                for sentiment in ['positif', 'negatif', 'netral']:
+                                    sentiment_texts = results_df[results_df['sentiment'] == sentiment]['text'].tolist()
+                                    wordcloud_images[sentiment] = create_wordcloud(sentiment_texts, sentiment)
+                                
+                                # Generate and display insights
+                                insights = generate_summary_with_gemini(
+                                    gemini_model,
+                                    sentiment_counts,
+                                    wordcloud_images,
+                                    st.session_state.language
+                                )
+                                st.markdown(insights)
+                        
+                        # Word Clouds
+                        st.header(get_text('wordcloud_header'))
+                        for sentiment in ['positif', 'negatif', 'netral']:
+                            sentiment_texts = results_df[results_df['sentiment'] == sentiment]['text'].tolist()
+                            wordcloud_fig = create_wordcloud(sentiment_texts, sentiment)
+                            if wordcloud_fig:
+                                st.pyplot(wordcloud_fig)
+                        
+                        # Detailed Results
+                        st.header(get_text('detail_results'))
+                        
+                        # Filter by sentiment
+                        selected_sentiment = st.selectbox(
+                            get_text('filter_sentiment'),
+                            ['all'] + list(sentiment_counts.keys())
                         )
                         
-                        st.markdown(summary)
-                
-                # Gemini AI Summary
-                if gemini_model:
-                    st.subheader(get_text('ai_insights'))
-                    
-                    with st.spinner(get_text('generating_insights')):
-                        summary = generate_summary_with_gemini(
-                            gemini_model, 
-                            sentiment_counts, 
-                            wordcloud_images,
-                            st.session_state.language
+                        filtered_df = results_df if selected_sentiment == 'all' else \
+                                    results_df[results_df['sentiment'] == selected_sentiment]
+                        
+                        st.dataframe(filtered_df[['text', 'sentiment', 'confidence']])
+                        
+                        # Download results
+                        st.header(get_text('download_header'))
+                        
+                        csv = filtered_df.to_csv(index=False)
+                        st.download_button(
+                            get_text('download_button'),
+                            csv,
+                            "sentiment_analysis_results.csv",
+                            "text/csv",
+                            key='download-csv'
                         )
                         
-                        st.markdown(summary)
-        
+                        # Summary statistics
+                        st.header(get_text('summary_stats'))
+                        
+                        st.write(get_text('sentiment_distribution'))
+                        for sentiment, count in sentiment_counts.items():
+                            percentage = (count / len(results_df)) * 100
+                            st.write(f"- {sentiment.title()}: {count} ({percentage:.1f}%)")
+                        
+                        st.write(get_text('confidence_stats'))
+                        st.write(f"- Mean: {results_df['confidence'].mean():.3f}")
+                        st.write(f"- Median: {results_df['confidence'].median():.3f}")
+                        st.write(f"- Min: {results_df['confidence'].min():.3f}")
+                        st.write(f"- Max: {results_df['confidence'].max():.3f}")
+                        
         except Exception as e:
             st.error(get_text('error_processing').format(error=str(e)))
             st.info(get_text('file_validation'))
