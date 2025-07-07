@@ -663,26 +663,6 @@ def main():
         help="Words shorter than this will be removed"
     )
     
-    # Pengaturan analisis
-    st.sidebar.subheader(get_text('analysis_header'))
-    
-    max_length = st.sidebar.slider(
-        "Maximum text length (characters)",
-        min_value=50,
-        max_value=1000,
-        value=512,
-        help="Text will be truncated if longer than this"
-    )
-    
-    min_confidence = st.sidebar.slider(
-        "Minimum confidence threshold",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.5,
-        step=0.1,
-        help="Filter results by confidence score"
-    )
-    
     # File upload
     uploaded_file = st.file_uploader(
         get_text('upload_label'),
