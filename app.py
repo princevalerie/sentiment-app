@@ -60,7 +60,7 @@ TRANSLATIONS = {
         'api_key_help': "Untuk mendapatkan insight dan ringkasan berbasis AI",
         'gemini_ready': "✅ Gemini AI siap untuk insight",
         'preprocessing_header': "🧹 Pengaturan Preprocessing",
-        'analysis_header': "📈 Pengaturan Analisis",
+        'analysis_header': "📈 Pengaturan Analisis", # This header is now unused in UI but kept in translations
         'upload_label': "Upload file CSV",
         'upload_help': "Upload file CSV yang berisi ulasan pelanggan",
         'file_success': "✅ File berhasil diupload! Bentuk: {shape}",
@@ -103,8 +103,8 @@ TRANSLATIONS = {
         'model_failed': "❌ Gagal memuat model AI. Pastikan koneksi internet stabil.",
         'error_processing': "❌ Error memproses file: {error}",
         'file_validation': "Pastikan file CSV valid dan berisi kolom teks yang dapat dianalisis",
-        'neutral_range_label': "Rentang Confidence Netral (0-1)",
-        'neutral_range_help': "Jika skor confidence tertinggi berada dalam rentang ini, sentimen akan dianggap netral."
+        'neutral_range_label': "Rentang Confidence Netral (0-1)", # This label is now unused in UI but kept in translations
+        'neutral_range_help': "Jika skor confidence tertinggi berada dalam rentang ini, sentimen akan dianggap netral." # This help text is now unused in UI but kept in translations
     },
     'en': {
         'title': "📊 Enhanced Customer Review Sentiment Analyzer",
@@ -115,7 +115,7 @@ TRANSLATIONS = {
         'api_key_help': "To get AI-powered insights and summary",
         'gemini_ready': "✅ Gemini AI ready for insights",
         'preprocessing_header': "🧹 Preprocessing Settings",
-        'analysis_header': "📈 Analysis Settings",
+        'analysis_header': "📈 Analysis Settings", # This header is now unused in UI but kept in translations
         'upload_label': "Upload CSV file",
         'upload_help': "Upload CSV file containing customer reviews",
         'file_success': "✅ File uploaded successfully! Shape: {shape}",
@@ -158,8 +158,8 @@ TRANSLATIONS = {
         'model_failed': "❌ Failed to load AI model. Please check internet connection.",
         'error_processing': "❌ Error processing file: {error}",
         'file_validation': "Please ensure CSV file is valid and contains text columns for analysis",
-        'neutral_range_label': "Neutral Confidence Range (0-1)",
-        'neutral_range_help': "If the highest confidence score falls within this range, the sentiment will be considered neutral."
+        'neutral_range_label': "Neutral Confidence Range (0-1)", # This label is now unused in UI but kept in translations
+        'neutral_range_help': "If the highest confidence score falls within this range, the sentiment will be considered neutral." # This help text is now unused in UI but kept in translations
     }
 }
 
@@ -390,7 +390,7 @@ def map_sentiment_label(label: str, language: str) -> str:
     return label_mapping.get(label, 'netral') # Default ke netral jika label tidak ditemukan
 
 # Fungsi untuk analisis sentimen
-def analyze_sentiment(classifier, texts: List[str], language: str, neutral_lower_bound: float, neutral_upper_bound: float) -> List[Dict]:
+def analyze_sentiment(classifier, texts: List[str], language: str, neutral_lower_bound: float = 0.45, neutral_upper_bound: float = 0.55) -> List[Dict]:
     """Analisis sentimen menggunakan Model AI dengan logika netralisasi berbasis rentang"""
     results = []
     
@@ -417,20 +417,19 @@ def analyze_sentiment(classifier, texts: List[str], language: str, neutral_lower
             final_sentiment = best_sentiment_raw
             final_confidence = confidence_raw
 
-            # --- Logika Netralisasi Baru: Jika confidence tertinggi berada dalam rentang netral ---
+            # --- Logika Netralisasi: Jika confidence tertinggi berada dalam rentang netral ---
+            # Menggunakan nilai default 0.45 dan 0.55 jika tidak disediakan
             if (confidence_raw >= neutral_lower_bound and confidence_raw <= neutral_upper_bound):
                  final_sentiment = 'netral'
                  # final_confidence tetap confidence_raw untuk menunjukkan skor asli model
-            # --- Akhir Logika Netralisasi Baru ---
+            # --- Akhir Logika Netralisasi ---
 
             # Logika lama untuk memprioritaskan non-netral jika skor sangat dekat
             # Ini akan dievaluasi setelah logika netralisasi berbasis rentang
-            if best_sentiment_raw != 'netral' and len(scores) > 1 and abs(scores[0][1] - scores[1][1]) < 0.1:
-                if 'netral' in [scores[0][0], scores[1][0]]:
-                    # Jika sentimen tertinggi bukan netral, tapi ada netral di 2 teratas
-                    # dan skornya sangat dekat, pertahankan sentimen non-netral
-                    # Jika sentimen tertinggi adalah netral, maka logika di atas akan memaksanya netral
-                    pass # Logika netralisasi berbasis rentang sudah menangani ini
+            # Dihapus karena logika netralisasi berbasis rentang sudah cukup komprehensif
+            # if best_sentiment_raw != 'netral' and len(scores) > 1 and abs(scores[0][1] - scores[1][1]) < 0.1:
+            #     if 'netral' in [scores[0][0], scores[1][0]]:
+            #         pass 
             
             results.append({
                 "text": text,
@@ -679,17 +678,9 @@ def main():
         help="Kata yang lebih pendek dari ini akan dihapus"
     )
 
-    # Pengaturan analisis
-    st.sidebar.subheader(get_text('analysis_header'))
-    neutral_confidence_range = st.sidebar.slider(
-        get_text('neutral_range_label'),
-        min_value=0.0,
-        max_value=1.0,
-        value=(0.45, 0.55), # Default rentang 0.45 - 0.55
-        step=0.01,
-        help=get_text('neutral_range_help')
-    )
-    neutral_lower_bound, neutral_upper_bound = neutral_confidence_range
+    # Hardcode the neutral confidence range as the sidebar control is removed
+    neutral_lower_bound = 0.45
+    neutral_upper_bound = 0.55
     
     # Upload file
     uploaded_file = st.file_uploader(
@@ -774,6 +765,7 @@ def main():
                     
                     # Analisis sentimen
                     with st.spinner(get_text('analyzing_text').format(count=len(all_texts))):
+                        # Pass the hardcoded neutral bounds to the analysis function
                         results = analyze_sentiment(classifier, all_texts, st.session_state.language, neutral_lower_bound, neutral_upper_bound)
                         
                         # Konversi hasil ke DataFrame
