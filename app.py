@@ -394,36 +394,38 @@ def analyze_sentiment(classifier, texts: List[str], language: str) -> List[Dict]
     
     for i, text in enumerate(texts):
         if not text or len(text.strip()) < 3:
-            results.append({
-                "text": text,
-                "sentiment": "netral",
-                "confidence": 0.5,
-                "all_scores": {}
-            })
-            continue
+            continue  # Skip empty texts instead of marking as neutral
         
         try:
             prediction = classifier(text)
-            all_scores = {item['label']: item['score'] for item in prediction}
-            best_pred = max(prediction, key=lambda x: x['score'])
+            all_scores = {item['label']: item['score'] for item in prediction[0]}
             
-            sentiment = map_sentiment_label(best_pred['label'], language)
-            confidence = best_pred['score']
+            # Get all sentiment scores
+            scores = []
+            for pred in prediction[0]:
+                sentiment = map_sentiment_label(pred['label'], language)
+                scores.append((sentiment, pred['score']))
+            
+            # Sort by score and get the highest
+            scores.sort(key=lambda x: x[1], reverse=True)
+            best_sentiment, confidence = scores[0]
+            
+            # If scores are very close (within 10% difference), use the more extreme sentiment
+            if len(scores) > 1 and abs(scores[0][1] - scores[1][1]) < 0.1:
+                if 'netral' in [scores[0][0], scores[1][0]]:
+                    # Prefer non-neutral sentiment if scores are close
+                    best_sentiment = scores[1][0] if scores[0][0] == 'netral' else scores[0][0]
             
             results.append({
                 "text": text,
-                "sentiment": sentiment,
+                "sentiment": best_sentiment,
                 "confidence": confidence,
                 "all_scores": all_scores
             })
             
         except Exception as e:
-            results.append({
-                "text": text,
-                "sentiment": "netral",
-                "confidence": 0.5,
-                "all_scores": {}
-            })
+            st.warning(f"Error analyzing text: {str(e)}")
+            continue
         
         progress = (i + 1) / len(texts)
         progress_bar.progress(progress)
@@ -731,7 +733,7 @@ def main():
                         # Preprocess texts
                         processed_texts = [
                             comprehensive_text_preprocessing(
-                                text[:max_length],
+                                text,  # Removed max_length truncation
                                 language=st.session_state.language,
                                 stemmer=stemmer,
                                 stopword_remover=stopword_remover,
@@ -762,14 +764,7 @@ def main():
                         # Convert results to DataFrame
                         results_df = pd.DataFrame(results)
                         
-                        # Filter by confidence
-                        results_df = results_df[results_df['confidence'] >= min_confidence]
-                        
-                        if len(results_df) == 0:
-                            st.warning(get_text('no_results').format(threshold=min_confidence))
-                            return
-                        
-                        # Calculate sentiment counts
+                        # Calculate sentiment counts - removed confidence filtering
                         sentiment_counts = results_df['sentiment'].value_counts().to_dict()
                         
                         # Display results
