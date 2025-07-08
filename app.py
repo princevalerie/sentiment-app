@@ -869,7 +869,10 @@ def main():
                         # Word clouds based on target column type
                         st.subheader("Word Clouds")
                         
-                        if target_column in column_types['numeric']:
+                        # Check if target column is numeric by checking the first non-null value
+                        is_numeric_target = pd.to_numeric(df[target_column], errors='coerce').notna().any()
+                        
+                        if is_numeric_target and scale_type:
                             # For numeric ratings, group texts by sentiment categories
                             sentiment_texts = {
                                 'negative': [],
@@ -881,30 +884,33 @@ def main():
                             for idx, row in df.iterrows():
                                 rating = row[target_column]
                                 if pd.notna(rating):
-                                    rating = float(rating)
-                                    # Determine sentiment based on scale type
-                                    if scale_type == '1-5':
-                                        if rating <= 2:
-                                            sentiment = 'negative'
-                                        elif rating >= 4:
-                                            sentiment = 'positive'
-                                        else:
-                                            sentiment = 'neutral'
-                                    else:  # 1-10 scale
-                                        if rating <= 4:
-                                            sentiment = 'negative'
-                                        elif rating >= 7:
-                                            sentiment = 'positive'
-                                        else:
-                                            sentiment = 'neutral'
-                                    
-                                    # Combine text from selected columns
-                                    text = ' '.join([
-                                        str(row[col]) for col in text_columns 
-                                        if pd.notna(row[col]) and str(row[col]).strip()
-                                    ])
-                                    if text.strip():
-                                        sentiment_texts[sentiment].append(text)
+                                    try:
+                                        rating = float(rating)
+                                        # Determine sentiment based on scale type
+                                        if scale_type == '1-5':
+                                            if rating <= 2:
+                                                sentiment = 'negative'
+                                            elif rating >= 4:
+                                                sentiment = 'positive'
+                                            else:
+                                                sentiment = 'neutral'
+                                        else:  # 1-10 scale
+                                            if rating <= 4:
+                                                sentiment = 'negative'
+                                            elif rating >= 7:
+                                                sentiment = 'positive'
+                                            else:
+                                                sentiment = 'neutral'
+                                        
+                                        # Combine text from selected columns
+                                        text = ' '.join([
+                                            str(row[col]) for col in text_columns 
+                                            if pd.notna(row[col]) and str(row[col]).strip()
+                                        ])
+                                        if text.strip():
+                                            sentiment_texts[sentiment].append(text)
+                                    except (ValueError, TypeError):
+                                        continue
                             
                             # Create word cloud for each sentiment category
                             for sentiment, texts in sentiment_texts.items():
