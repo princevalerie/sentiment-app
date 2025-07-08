@@ -22,7 +22,7 @@ warnings.filterwarnings('ignore')
 
 # Streamlit configuration
 st.set_page_config(
-    page_title="Enhanced Sentiment Analyzer",
+    page_title="Sentiment Analysis App",
     page_icon="📊",
     layout="wide"
 )
@@ -102,7 +102,7 @@ def load_sentiment_model(language: str):
     
     config = LANGUAGES[language]
     try:
-        with st.spinner(f"Loading AI model for {config.name}..."):
+        with st.spinner(f"Loading sentiment model for {config.name}..."):
             # First try to load the tokenizer to verify model exists
             from transformers import AutoTokenizer
             try:
@@ -119,10 +119,10 @@ def load_sentiment_model(language: str):
                 tokenizer=tokenizer,
                 return_all_scores=True
             )
-            st.success(f"✅ Successfully loaded {config.name} model")
+            st.success(f"✅ Successfully loaded {config.name} sentiment model")
             return classifier
     except Exception as e:
-        st.error(f"Failed to load model for {config.name}: {str(e)}")
+        st.error(f"Failed to load sentiment model for {config.name}: {str(e)}")
         st.error("Please check your internet connection or try again later.")
         return None
 
@@ -476,7 +476,13 @@ def convert_rating_to_sentiment(rating: float, scale_type: str) -> str:
 
 # Visualization functions
 def create_sentiment_chart(sentiment_counts: Dict[str, int], mode: str = 'unlabeled') -> go.Figure:
-    """Create optimized sentiment distribution chart"""
+    """Create optimized sentiment distribution chart with consistent colors"""
+    color_map = {
+        'positive': '#2E8B57',  # Green
+        'negative': '#DC143C',  # Red
+        'neutral': '#FFD700'    # Gold/Yellow
+    }
+    
     if mode == 'unlabeled':
         # Only show positive/negative for unlabeled
         labels = ['positive', 'negative']
@@ -485,7 +491,7 @@ def create_sentiment_chart(sentiment_counts: Dict[str, int], mode: str = 'unlabe
         labels = list(sentiment_counts.keys())
         values = list(sentiment_counts.values())
     
-    colors = ['#2E8B57', '#DC143C', '#4682B4'][:len(labels)]
+    colors = [color_map.get(label, '#4682B4') for label in labels]
     
     fig = go.Figure(data=[
         go.Pie(
@@ -526,7 +532,7 @@ def create_confidence_chart(df: pd.DataFrame) -> go.Figure:
     return fig
 
 def create_wordcloud(texts: List[str], sentiment: str, max_words: int = 100) -> Optional[plt.Figure]:
-    """Create optimized word cloud"""
+    """Create optimized word cloud with consistent colors"""
     if not texts:
         return None
     
@@ -535,7 +541,14 @@ def create_wordcloud(texts: List[str], sentiment: str, max_words: int = 100) -> 
         return None
     
     try:
-        colormap = 'Greens' if sentiment == 'positive' else 'Reds'
+        # Consistent color scheme
+        color_map = {
+            'positive': 'Greens',
+            'negative': 'Reds',
+            'neutral': 'YlOrBr'  # Yellow-Orange-Brown for neutral
+        }
+        
+        colormap = color_map.get(sentiment, 'viridis')
         
         wordcloud = WordCloud(
             width=800,
@@ -558,42 +571,61 @@ def create_wordcloud(texts: List[str], sentiment: str, max_words: int = 100) -> 
         return None
 
 # Gemini integration
-def generate_insights_with_gemini(model, sentiment_counts: Dict, language: str) -> str:
-    """Generate insights using Gemini AI"""
+def generate_insights_with_gemini(model, results_df: pd.DataFrame, sentiment_counts: Dict, language: str) -> str:
+    """Generate business insights using Gemini AI"""
     try:
         if not model:
             return "Gemini AI not available for insights generation."
         
+        # Sample text data for domain identification
+        sample_texts = results_df['text'].head(10).tolist()
+        sample_text = ' '.join(sample_texts)
+        
         # Prepare sentiment data
         total_reviews = sum(sentiment_counts.values())
-        positive_pct = (sentiment_counts.get('positive', 0) / total_reviews) * 100
-        negative_pct = (sentiment_counts.get('negative', 0) / total_reviews) * 100
+        positive_pct = (sentiment_counts.get('positive', 0) / total_reviews) * 100 if total_reviews > 0 else 0
+        negative_pct = (sentiment_counts.get('negative', 0) / total_reviews) * 100 if total_reviews > 0 else 0
+        neutral_pct = (sentiment_counts.get('neutral', 0) / total_reviews) * 100 if total_reviews > 0 else 0
         
         lang_context = "Indonesian" if language == 'id' else "English"
         
+        # Enhanced prompt for business insights
         prompt = f"""
-        Analyze this sentiment analysis results for {lang_context} customer reviews:
-        
-        **Overall Distribution:**
+        Analyze these customer reviews in {lang_context} and provide comprehensive business insights:
+
+        **Sample Review Content:**
+        {sample_text[:1000]}...
+
+        **Sentiment Analysis Results:**
         - Positive: {sentiment_counts.get('positive', 0)} reviews ({positive_pct:.1f}%)
         - Negative: {sentiment_counts.get('negative', 0)} reviews ({negative_pct:.1f}%)
+        - Neutral: {sentiment_counts.get('neutral', 0)} reviews ({neutral_pct:.1f}%)
         - Total analyzed: {total_reviews} reviews
-        
-        Provide actionable insights in this format:
-        
-        ## 📊 Overview
-        [Brief summary of overall sentiment trend]
-        
-        ## 💡 Key Insights
-        [3-4 important insights from the data]
-        
-        ## 📈 Recommendations
-        [Specific actionable recommendations]
-        
-        ## ⚠️ Areas of Concern
-        [Issues that need attention]
-        
-        Use professional, clear language suitable for business decision-making.
+
+        Based on the review content and sentiment distribution, provide insights in this format:
+
+        ## 🏢 Business Domain Analysis
+        [Identify the business domain/industry based on review content and provide context]
+
+        ## 📊 Sentiment Overview
+        [Comprehensive analysis of sentiment distribution and what it means for the business]
+
+        ## 🔍 Key Insights
+        [4-5 critical insights extracted from the sentiment analysis that impact business performance]
+
+        ## 📈 Strategic Recommendations
+        [Specific, actionable strategies the company can implement immediately to improve customer satisfaction]
+
+        ## ⚠️ Priority Actions
+        [Urgent issues that require immediate attention based on negative sentiment analysis]
+
+        ## 💡 Competitive Advantages
+        [Positive aspects the company should leverage and amplify]
+
+        ## 📋 Implementation Roadmap
+        [Step-by-step action plan with priorities and timelines]
+
+        Provide practical, data-driven recommendations that can be implemented by management teams immediately. Focus on actionable insights rather than generic advice.
         """
         
         response = model.generate_content(prompt)
@@ -609,37 +641,39 @@ def main():
     init_session_state()
     
     # App header
-    st.title("📊 Enhanced Sentiment Analyzer")
+    st.title("📊 Sentiment Analysis App")
     st.markdown("Analyze customer sentiment with AI-powered insights")
     
-    # Language selection
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button(f"{LANGUAGES['id'].flag} {LANGUAGES['id'].name}", 
-                     type="primary" if st.session_state.language == 'id' else "secondary"):
-            update_session_state('language', 'id')
-    with col2:
-        if st.button(f"{LANGUAGES['en'].flag} {LANGUAGES['en'].name}",
-                     type="primary" if st.session_state.language == 'en' else "secondary"):
-            update_session_state('language', 'en')
-    
-    # Mode selection
-    st.subheader("Analysis Mode")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("📋 Labeled Analysis", 
-                     type="primary" if st.session_state.analysis_mode == 'labeled' else "secondary"):
-            update_session_state('analysis_mode', 'labeled')
-    with col2:
-        if st.button("🤖 AI Prediction", 
-                     type="primary" if st.session_state.analysis_mode == 'unlabeled' else "secondary"):
-            update_session_state('analysis_mode', 'unlabeled')
-    
-    # Configuration sidebar
+    # Sidebar configuration
     with st.sidebar:
         st.header("⚙️ Configuration")
         
+        # Language selection
+        st.subheader("🌍 Language")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button(f"{LANGUAGES['id'].flag} ID", 
+                         type="primary" if st.session_state.language == 'id' else "secondary"):
+                update_session_state('language', 'id')
+        with col2:
+            if st.button(f"{LANGUAGES['en'].flag} EN",
+                         type="primary" if st.session_state.language == 'en' else "secondary"):
+                update_session_state('language', 'en')
+        
+        # Analysis mode selection
+        st.subheader("📊 Analysis Mode")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📋 Labeled", 
+                         type="primary" if st.session_state.analysis_mode == 'labeled' else "secondary"):
+                update_session_state('analysis_mode', 'labeled')
+        with col2:
+            if st.button("🤖 Unlabeled", 
+                         type="primary" if st.session_state.analysis_mode == 'unlabeled' else "secondary"):
+                update_session_state('analysis_mode', 'unlabeled')
+        
         # Gemini API key
+        st.subheader("🤖 AI Insights")
         api_key = st.text_input("Gemini API Key (Optional)", type="password")
         gemini_model = setup_gemini(api_key, st.session_state.language) if api_key else None
         
@@ -701,243 +735,226 @@ def main():
                     return
                 
                 target_column = st.selectbox(
-                    "Select target column:", 
+                    "Select rating column:",
                     column_types['numeric']
                 )
                 
-                if target_column:
-                    unique_vals = sorted(df[target_column].dropna().unique())
-                    max_val = max(unique_vals)
-                    scale_type = '1-5' if max_val <= 5 else '1-10'
-                    
-                    st.info(f"Scale: {scale_type} (Range: {min(unique_vals)}-{max_val})")
-                
-                if not text_columns or not target_column:
-                    st.warning("⚠️ Please select required columns")
-                    return
-                
-            else:
-                # Unlabeled mode configuration
-                text_columns = st.multiselect(
-                    "Select text columns for analysis:", 
-                    column_types['text']
+                scale_type = st.radio(
+                    "Rating scale:",
+                    ['1-5', '1-10'],
+                    horizontal=True
                 )
                 
-                if not text_columns:
-                    st.warning("⚠️ Please select text columns")
-                    return
-                
-                # Load model
-                classifier = load_sentiment_model(st.session_state.language)
-                if not classifier:
-                    st.error("❌ Failed to load AI model")
-                    return
-            
-            # Analysis button
-            if st.button("🚀 Start Analysis", type="primary"):
-                with st.spinner("Processing..."):
-                    if st.session_state.analysis_mode == 'labeled':
-                        # Process labeled data
-                        results_df = process_labeled_data(df, text_columns, target_column, scale_type)
+                if st.button("Run Labeled Analysis", type="primary"):
+                    if not text_columns:
+                        st.error("❌ Please select at least one text column")
+                        return
+                    
+                    # Process labeled data
+                    with st.spinner("Processing labeled data..."):
+                        processed_df = process_labeled_data(
+                            df, 
+                            text_columns,
+                            target_column,
+                            scale_type
+                        )
                         
-                        if results_df.empty:
+                        if len(processed_df) == 0:
                             st.error("❌ No valid data to analyze")
                             return
                         
-                        # Count sentiments
-                        sentiment_counts = results_df['sentiment'].value_counts().to_dict()
+                        # Store results
+                        st.session_state.current_results = processed_df
                         
-                    else:
-                        # Process unlabeled data
-                        # Initialize preprocessor
-                        preprocessor = TextPreprocessor(st.session_state.language)
+                        # Display results
+                        st.success(f"✅ Analyzed {len(processed_df)} reviews")
                         
-                        # Combine and preprocess texts
-                        all_texts = []
-                        for col in text_columns:
-                            texts = df[col].dropna().astype(str).tolist()
-                            processed_texts = preprocessor.process_batch(texts, preprocess_config)
-                            all_texts.extend(processed_texts)
+                        # Calculate sentiment counts
+                        sentiment_counts = processed_df['sentiment'].value_counts().to_dict()
                         
-                        if not all_texts:
-                            st.error("❌ No valid text for analysis")
-                            return
+                        # Create visualizations
+                        col1, col2 = st.columns(2)
                         
-                        # Analyze sentiment
-                        analyzer = SentimentAnalyzer(classifier, st.session_state.language, 'unlabeled')
-                        results = analyzer.analyze_batch(all_texts)
+                        with col1:
+                            st.plotly_chart(
+                                create_sentiment_chart(sentiment_counts, mode='labeled'),
+                                use_container_width=True
+                            )
                         
-                        if not results:
-                            st.error("❌ Analysis failed")
-                            return
-                        
-                        # Create results DataFrame
-                        results_df = pd.DataFrame(results)
-                        
-                        # Force binary classification for unlabeled mode
-                        valid_sentiments = ['positive', 'negative']
-                        results_df = results_df[results_df['sentiment'].isin(valid_sentiments)]
-                        
-                        # Count sentiments
-                        sentiment_counts = results_df['sentiment'].value_counts().to_dict()
-                
-                # Display results
-                st.header("📈 Analysis Results")
-                
-                # Metrics
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total Reviews", len(results_df))
-                with col2:
-                    st.metric("Positive", sentiment_counts.get('positive', 0))
-                with col3:
-                    st.metric("Negative", sentiment_counts.get('negative', 0))
-                
-                # Visualizations
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    # Sentiment distribution
-                    chart = create_sentiment_chart(sentiment_counts, st.session_state.analysis_mode)
-                    st.plotly_chart(chart, use_container_width=True)
-                
-                with col2:
-                    # Confidence or rating distribution
-                    if st.session_state.analysis_mode == 'unlabeled':
-                        conf_chart = create_confidence_chart(results_df)
-                        st.plotly_chart(conf_chart, use_container_width=True)
-                    else:
-                        # Show rating distribution for labeled mode
-                        if 'rating' in results_df.columns:
-                            rating_fig = px.histogram(
-                                results_df, 
-                                x='rating', 
+                        with col2:
+                            # Rating distribution
+                            fig = px.histogram(
+                                processed_df,
+                                x='rating',
                                 color='sentiment',
-                                title='Rating Distribution by Sentiment'
+                                title='Rating Distribution',
+                                labels={'rating': 'Rating', 'count': 'Count'}
                             )
-                            st.plotly_chart(rating_fig, use_container_width=True)
-                
-                # Word clouds
-                st.header("☁️ Word Clouds")
-                
-                # Only show positive and negative for unlabeled mode
-                sentiments_to_show = ['positive', 'negative']
-                
-                for sentiment in sentiments_to_show:
-                    if sentiment in sentiment_counts and sentiment_counts[sentiment] > 0:
-                        texts = results_df[results_df['sentiment'] == sentiment]['text'].tolist()
-                        wordcloud_fig = create_wordcloud(texts, sentiment)
+                            st.plotly_chart(fig, use_container_width=True)
                         
-                        if wordcloud_fig:
-                            st.pyplot(wordcloud_fig)
-                            plt.close(wordcloud_fig)
-                
-                # Gemini insights
-                if gemini_model:
-                    st.header("🤖 AI Insights")
-                    with st.spinner("Generating insights..."):
-                        insights = generate_insights_with_gemini(
-                            gemini_model, 
-                            sentiment_counts, 
-                            st.session_state.language
+                        # Word clouds by sentiment
+                        st.subheader("Word Clouds by Sentiment")
+                        
+                        for sentiment in ['positive', 'negative', 'neutral']:
+                            sentiment_texts = processed_df[
+                                processed_df['sentiment'] == sentiment
+                            ]['text'].tolist()
+                            
+                            if sentiment_texts:
+                                wordcloud_fig = create_wordcloud(
+                                    sentiment_texts,
+                                    sentiment
+                                )
+                                if wordcloud_fig:
+                                    st.pyplot(wordcloud_fig)
+                        
+                        # Generate insights if Gemini is available
+                        if gemini_model:
+                            st.subheader("🤖 AI-Generated Business Insights")
+                            with st.spinner("Generating insights..."):
+                                insights = generate_insights_with_gemini(
+                                    gemini_model,
+                                    processed_df,
+                                    sentiment_counts,
+                                    st.session_state.language
+                                )
+                                st.markdown(insights)
+                        
+                        # Show detailed results
+                        st.subheader("Detailed Results")
+                        st.dataframe(
+                            processed_df[['text', 'sentiment', 'rating']],
+                            use_container_width=True
                         )
-                        st.markdown(insights)
+            
+            else:
+                # Unlabeled mode configuration
+                st.subheader("Configuration for Unlabeled Analysis")
                 
-                # Detailed results
-                st.header("📋 Detailed Results")
+                text_columns = st.multiselect(
+                    "Select text columns:",
+                    column_types['text']
+                )
                 
-                # Filter controls
-                with st.expander("Filter Options"):
+                if st.button("Run Unlabeled Analysis", type="primary"):
+                    if not text_columns:
+                        st.error("❌ Please select at least one text column")
+                        return
+                    
+                    # Load model
+                    model = load_sentiment_model(st.session_state.language)
+                    if not model:
+                        return
+                    
+                    # Initialize preprocessor
+                    preprocessor = TextPreprocessor(st.session_state.language)
+                    
+                    # Combine text columns
+                    with st.spinner("Preprocessing texts..."):
+                        combined_texts = []
+                        for _, row in df.iterrows():
+                            text = ' '.join([
+                                str(row[col]) for col in text_columns 
+                                if pd.notna(row[col]) and str(row[col]).strip()
+                            ])
+                            if text.strip():
+                                combined_texts.append(text)
+                        
+                        # Preprocess texts
+                        processed_texts = preprocessor.process_batch(
+                            combined_texts,
+                            preprocess_config
+                        )
+                    
+                    if not processed_texts:
+                        st.error("❌ No valid texts to analyze")
+                        return
+                    
+                    # Analyze sentiments
+                    with st.spinner("Analyzing sentiments..."):
+                        analyzer = SentimentAnalyzer(
+                            model,
+                            st.session_state.language,
+                            mode='unlabeled'
+                        )
+                        results = analyzer.analyze_batch(processed_texts)
+                    
+                    if not results:
+                        st.error("❌ Analysis failed")
+                        return
+                    
+                    # Convert results to DataFrame
+                    results_df = pd.DataFrame(results)
+                    
+                    # Store results
+                    st.session_state.current_results = results_df
+                    
+                    # Display results
+                    st.success(f"✅ Analyzed {len(results_df)} texts")
+                    
+                    # Calculate sentiment counts
+                    sentiment_counts = results_df['sentiment'].value_counts().to_dict()
+                    
+                    # Create visualizations
                     col1, col2 = st.columns(2)
+                    
                     with col1:
-                        sentiment_filter = st.selectbox(
-                            "Filter by sentiment:",
-                            ['All', 'positive', 'negative']
+                        st.plotly_chart(
+                            create_sentiment_chart(sentiment_counts, mode='unlabeled'),
+                            use_container_width=True
                         )
+                    
                     with col2:
-                        if st.session_state.analysis_mode == 'unlabeled':
-                            min_confidence = st.slider(
-                                "Minimum confidence:", 
-                                0.0, 1.0, 0.5
-                            )
-                
-                # Apply filters
-                filtered_df = results_df.copy()
-                if sentiment_filter != 'All':
-                    filtered_df = filtered_df[filtered_df['sentiment'] == sentiment_filter]
-                
-                if st.session_state.analysis_mode == 'unlabeled' and 'confidence' in filtered_df.columns:
-                    filtered_df = filtered_df[filtered_df['confidence'] >= min_confidence]
-                
-                # Display filtered results
-                st.dataframe(
-                    filtered_df,
-                    use_container_width=True,
-                    hide_index=True
-                )
-                
-                # Download results
-                st.header("💾 Download Results")
-                
-                csv_buffer = io.StringIO()
-                filtered_df.to_csv(csv_buffer, index=False)
-                csv_string = csv_buffer.getvalue()
-                
-                st.download_button(
-                    label="📥 Download Results as CSV",
-                    data=csv_string,
-                    file_name=f"sentiment_analysis_{st.session_state.language}_{st.session_state.analysis_mode}.csv",
-                    mime="text/csv"
-                )
-                
-                # Statistics summary
-                st.header("📊 Statistics Summary")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.subheader("📈 Sentiment Statistics")
-                    total_reviews = len(results_df)
+                        st.plotly_chart(
+                            create_confidence_chart(results_df),
+                            use_container_width=True
+                        )
+                    
+                    # Word clouds by sentiment
+                    st.subheader("Word Clouds by Sentiment")
                     
                     for sentiment in ['positive', 'negative']:
-                        count = sentiment_counts.get(sentiment, 0)
-                        percentage = (count / total_reviews) * 100 if total_reviews > 0 else 0
-                        st.write(f"**{sentiment.title()}:** {count} reviews ({percentage:.1f}%)")
-                
-                with col2:
-                    if st.session_state.analysis_mode == 'unlabeled':
-                        st.subheader("🎯 Confidence Statistics")
-                        avg_confidence = results_df['confidence'].mean()
-                        min_conf = results_df['confidence'].min()
-                        max_conf = results_df['confidence'].max()
+                        sentiment_texts = results_df[
+                            results_df['sentiment'] == sentiment
+                        ]['text'].tolist()
                         
-                        st.write(f"**Average Confidence:** {avg_confidence:.3f}")
-                        st.write(f"**Min Confidence:** {min_conf:.3f}")
-                        st.write(f"**Max Confidence:** {max_conf:.3f}")
-                        
-                        # High confidence predictions
-                        high_conf_count = len(results_df[results_df['confidence'] > 0.8])
-                        high_conf_percentage = (high_conf_count / total_reviews) * 100
-                        st.write(f"**High Confidence (>0.8):** {high_conf_count} reviews ({high_conf_percentage:.1f}%)")
-                
-                # Success message
-                st.success("✅ Analysis completed successfully!")
-                
+                        if sentiment_texts:
+                            wordcloud_fig = create_wordcloud(
+                                sentiment_texts,
+                                sentiment
+                            )
+                            if wordcloud_fig:
+                                st.pyplot(wordcloud_fig)
+                    
+                    # Generate insights if Gemini is available
+                    if gemini_model:
+                        st.subheader("🤖 AI-Generated Business Insights")
+                        with st.spinner("Generating insights..."):
+                            insights = generate_insights_with_gemini(
+                                gemini_model,
+                                results_df,
+                                sentiment_counts,
+                                st.session_state.language
+                            )
+                            st.markdown(insights)
+                    
+                    # Show detailed results
+                    st.subheader("Detailed Results")
+                    st.dataframe(
+                        results_df[[
+                            'text',
+                            'sentiment',
+                            'confidence',
+                            'positive_score',
+                            'negative_score',
+                            'neutral_score'
+                        ]],
+                        use_container_width=True
+                    )
+        
         except Exception as e:
             st.error(f"❌ Error processing file: {str(e)}")
-            st.error("Please check your file format and try again.")
-    
-    # Footer
-    st.markdown("---")
-    st.markdown(
-        """
-        <div style="text-align: center; color: #666; padding: 20px;">
-            <p>Enhanced Sentiment Analyzer</p>
-            <p>Powered by 🤖 AI Models + 🔥 Gemini AI + 📊 Advanced Analytics</p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+            st.error("Please check your file format and try again")
 
 if __name__ == "__main__":
     main()
