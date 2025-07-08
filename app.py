@@ -294,7 +294,7 @@ def comprehensive_text_preprocessing(text: str,
 
 # Function to map sentiment labels
 def map_sentiment_label(label: str, language: str, scores: List[Dict]) -> str:
-    """Map label from model to desired format with confidence threshold"""
+    """Map label from model to desired format with binary classification for unlabeled mode"""
     try:
         label_mapping = LANGUAGES[language]['label_mapping']
         
@@ -305,43 +305,37 @@ def map_sentiment_label(label: str, language: str, scores: List[Dict]) -> str:
             if mapped_sentiment:
                 scores_dict[mapped_sentiment] = score['score']
         
-        # Get individual scores with safe defaults
+        # Get individual scores
         positive_score = scores_dict.get('positive', 0)
         negative_score = scores_dict.get('negative', 0)
-        neutral_score = scores_dict.get('neutral', 0)
-        
-        # Define thresholds for more balanced classification
-        NEUTRAL_THRESHOLD = 0.45  # Slightly lower threshold for neutral
-        CONFIDENCE_GAP = 0.15    # Slightly higher gap required
-        
-        # Find highest and second highest scores
-        scores_list = [positive_score, negative_score, neutral_score]
-        highest = max(scores_list)
-        second_highest = sorted(scores_list, reverse=True)[1]
         
         mapped_sentiment = label_mapping.get(label, 'neutral')
         
-        # If neutral is highest but doesn't exceed threshold or gap isn't significant
-        if mapped_sentiment == 'neutral':
-            if neutral_score < NEUTRAL_THRESHOLD or (highest - second_highest) < CONFIDENCE_GAP:
-                # Return the sentiment with highest score
-                if positive_score > negative_score:
-                    return 'positive'
-                elif negative_score > positive_score:
-                    return 'negative'
+        # For unlabeled mode or if prediction is neutral, convert to positive/negative
+        if st.session_state.analysis_mode == 'unlabeled' or mapped_sentiment == 'neutral':
+            # Compare positive and negative scores
+            if positive_score > negative_score:
+                return 'positive'
+            else:
+                return 'negative'
         
         return mapped_sentiment
+            
     except Exception as e:
         st.warning(f"Error in sentiment mapping: {str(e)}")
-        # Return the direct mapping if available, otherwise neutral
+        # Compare scores even in error case
         try:
-            return LANGUAGES[language]['label_mapping'].get(label, 'neutral')
+            scores_dict = {
+                'positive': next((s['score'] for s in scores if label_mapping[s['label']] == 'positive'), 0),
+                'negative': next((s['score'] for s in scores if label_mapping[s['label']] == 'negative'), 0)
+            }
+            return 'positive' if scores_dict['positive'] > scores_dict['negative'] else 'negative'
         except:
-            return 'neutral'
+            return 'positive' if random.random() > 0.5 else 'negative'
 
 # Function for sentiment analysis
 def analyze_sentiment(classifier, texts: List[str], language: str) -> List[Dict]:
-    """Sentiment analysis using AI Model with balanced classification"""
+    """Sentiment analysis using AI Model with binary classification"""
     results = []
     
     progress_bar = st.progress(0)
@@ -357,49 +351,46 @@ def analyze_sentiment(classifier, texts: List[str], language: str) -> List[Dict]
             # Store all raw scores
             all_scores = {item['label']: item['score'] for item in prediction[0]}
             
-            # Get the predicted label and scores
-            best_label = max(prediction[0], key=lambda x: x['score'])['label']
-            sentiment = map_sentiment_label(best_label, language, prediction[0])
-            
-            # Calculate adjusted confidence
+            # Map scores to sentiments
             label_mapping = LANGUAGES[language]['label_mapping']
             sentiment_scores = {}
-            
-            # Map scores to sentiments
             for item in prediction[0]:
                 mapped_label = label_mapping.get(item['label'])
                 if mapped_label:
                     sentiment_scores[mapped_label] = item['score']
             
-            # Ensure all sentiments have a score
-            for sent in ['positive', 'negative', 'neutral']:
-                if sent not in sentiment_scores:
-                    sentiment_scores[sent] = 0.0
+            # Get positive and negative scores
+            positive_score = sentiment_scores.get('positive', 0)
+            negative_score = sentiment_scores.get('negative', 0)
             
-            # Calculate confidence based on the gap between scores
-            main_score = sentiment_scores[sentiment]
-            other_scores = [score for label, score in sentiment_scores.items() if label != sentiment]
-            max_other_score = max(other_scores) if other_scores else 0
+            # Get the predicted sentiment
+            best_label = max(prediction[0], key=lambda x: x['score'])['label']
+            sentiment = map_sentiment_label(best_label, language, prediction[0])
             
-            # Confidence calculation based on the gap
-            score_gap = main_score - max_other_score
-            
-            if sentiment == 'neutral':
-                # Reduce confidence for neutral predictions
-                confidence = main_score * 0.9
+            # Calculate confidence based on the gap between positive and negative
+            total_score = positive_score + negative_score
+            if total_score > 0:
+                # Normalize scores
+                positive_norm = positive_score / total_score
+                negative_norm = negative_score / total_score
+                
+                # Calculate confidence based on the difference
+                score_gap = abs(positive_norm - negative_norm)
+                base_confidence = positive_norm if sentiment == 'positive' else negative_norm
+                
+                # Boost confidence if gap is significant
+                confidence = base_confidence + (score_gap * 0.2)
+                confidence = min(confidence, 1.0)  # Cap at 1.0
             else:
-                # Increase confidence if there's a clear gap
-                confidence = main_score + (score_gap * 0.3)
-            
-            # Ensure confidence is between 0 and 1
-            confidence = max(0.0, min(1.0, confidence))
+                confidence = 0.5  # Default confidence if no scores
             
             results.append({
                 "text": text,
                 "sentiment": sentiment,
                 "confidence": confidence,
                 "all_scores": all_scores,
-                "score_gap": score_gap  # Add gap for debugging
+                "positive_score": positive_score,
+                "negative_score": negative_score
             })
             
         except Exception as e:
@@ -499,11 +490,14 @@ def create_wordcloud(texts: List[str], sentiment: str) -> plt.Figure:
     if len(combined_text.strip()) < 10:
         return None
     
+    # Use only red and green for negative and positive
+    colormap = 'RdYlGn' if sentiment == 'positive' else 'RdYlGn_r'
+    
     wordcloud = WordCloud(
         width=800,
         height=400,
         background_color='white',
-        colormap='viridis' if sentiment == 'positive' else 'Reds' if sentiment == 'negative' else 'Blues',
+        colormap=colormap,
         max_words=100,
         relative_scaling=0.5,
         collocations=False
@@ -519,13 +513,18 @@ def create_wordcloud(texts: List[str], sentiment: str) -> plt.Figure:
 # Function for sentiment visualization
 def create_sentiment_chart(sentiment_counts: Dict[str, int]) -> go.Figure:
     """Create pie chart for sentiment distribution"""
-    labels = list(sentiment_counts.keys())
-    values = list(sentiment_counts.values())
+    # For unlabeled mode, only show positive and negative
+    if st.session_state.analysis_mode == 'unlabeled':
+        labels = ['positive', 'negative']
+        values = [sentiment_counts.get(label, 0) for label in labels]
+    else:
+        labels = list(sentiment_counts.keys())
+        values = list(sentiment_counts.values())
     
     colors = {
         'positive': '#2E8B57',  # Green
         'negative': '#DC143C',  # Red
-        'neutral': '#4682B4'    # Blue
+        'neutral': '#4682B4'    # Blue (only for labeled mode)
     }
     
     fig = go.Figure(data=[
@@ -878,19 +877,20 @@ def main():
                 # Map sentiment labels based on language
                 sentiment_mapping = {
                     'positive': 'positif',
-                    'negative': 'negatif',
-                    'neutral': 'netral'
+                    'negative': 'negatif'
                 } if st.session_state.language == 'id' else {
                     'positive': 'positive',
-                    'negative': 'negative',
-                    'neutral': 'neutral'
+                    'negative': 'negative'
                 }
                 
-                for sentiment_type in ['positive', 'negative', 'neutral']:
+                # Only process positive and negative for unlabeled mode
+                sentiments_to_process = ['positive', 'negative'] if st.session_state.analysis_mode == 'unlabeled' else ['positive', 'negative', 'neutral']
+                
+                for sentiment_type in sentiments_to_process:
                     sentiment_texts = results_df[results_df['sentiment'] == sentiment_type]['text'].tolist()
                     wordcloud_images[sentiment_type] = create_wordcloud(sentiment_texts, sentiment_type)
                     if wordcloud_images[sentiment_type] is not None:
-                        display_sentiment = sentiment_mapping[sentiment_type]
+                        display_sentiment = sentiment_mapping.get(sentiment_type, sentiment_type)
                         st.markdown(f"**{display_sentiment.title()} Sentiment**")
                         st.pyplot(wordcloud_images[sentiment_type])
                         plt.close()
