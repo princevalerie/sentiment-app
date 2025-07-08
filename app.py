@@ -38,14 +38,22 @@ LANGUAGES = {
         'flag': '🇮🇩',
         'model': 'mdhugol/indonesia-bert-sentiment-classification',
         'gemini_model': 'gemini-2.0-flash-exp',
-        'label_mapping': {'LABEL_0': 'positive', 'LABEL_1': 'neutral', 'LABEL_2': 'negative'}
+        'label_mapping': {
+            'LABEL_0': 'positive',  # Indonesian model: LABEL_0 = positive
+            'LABEL_1': 'neutral',   # LABEL_1 = neutral
+            'LABEL_2': 'negative'   # LABEL_2 = negative
+        }
     },
     'en': {
         'name': 'English',
         'flag': '🇺🇸',
         'model': 'cardiffnlp/twitter-roberta-base-sentiment-latest',
         'gemini_model': 'gemini-2.0-flash-exp',
-        'label_mapping': {'LABEL_0': 'negative', 'LABEL_1': 'neutral', 'LABEL_2': 'positive'}
+        'label_mapping': {
+            'LABEL_0': 'negative',  # English model: 0 = Negative
+            'LABEL_1': 'neutral',   # 1 = Neutral
+            'LABEL_2': 'positive'   # 2 = Positive
+        }
     }
 }
 
@@ -287,31 +295,49 @@ def comprehensive_text_preprocessing(text: str,
 # Function to map sentiment labels
 def map_sentiment_label(label: str, language: str, scores: List[Dict]) -> str:
     """Map label from model to desired format with confidence threshold"""
-    label_mapping = LANGUAGES[language]['label_mapping']
-    
-    # Get all scores
-    positive_score = next((s['score'] for s in scores if label_mapping[s['label']] == 'positive'), 0)
-    negative_score = next((s['score'] for s in scores if label_mapping[s['label']] == 'negative'), 0)
-    neutral_score = next((s['score'] for s in scores if label_mapping[s['label']] == 'neutral'), 0)
-    
-    # Define thresholds for more balanced classification
-    NEUTRAL_THRESHOLD = 0.5  # Higher threshold for neutral classification
-    CONFIDENCE_GAP = 0.1     # Minimum gap required between highest and second highest
-    
-    # Find highest and second highest scores
-    scores_list = [positive_score, negative_score, neutral_score]
-    highest = max(scores_list)
-    second_highest = sorted(scores_list, reverse=True)[1]
-    
-    # If neutral is highest but doesn't exceed threshold or gap isn't significant
-    if label_mapping[label] == 'neutral':
-        if neutral_score < NEUTRAL_THRESHOLD or (highest - second_highest) < CONFIDENCE_GAP:
-            # Return second most confident sentiment instead
-            if positive_score > negative_score:
-                return 'positive'
-            return 'negative'
-    
-    return label_mapping[label]
+    try:
+        label_mapping = LANGUAGES[language]['label_mapping']
+        
+        # Get all scores with proper mapping
+        scores_dict = {}
+        for score in scores:
+            mapped_sentiment = label_mapping.get(score['label'])
+            if mapped_sentiment:
+                scores_dict[mapped_sentiment] = score['score']
+        
+        # Get individual scores with safe defaults
+        positive_score = scores_dict.get('positive', 0)
+        negative_score = scores_dict.get('negative', 0)
+        neutral_score = scores_dict.get('neutral', 0)
+        
+        # Define thresholds for more balanced classification
+        NEUTRAL_THRESHOLD = 0.45  # Slightly lower threshold for neutral
+        CONFIDENCE_GAP = 0.15    # Slightly higher gap required
+        
+        # Find highest and second highest scores
+        scores_list = [positive_score, negative_score, neutral_score]
+        highest = max(scores_list)
+        second_highest = sorted(scores_list, reverse=True)[1]
+        
+        mapped_sentiment = label_mapping.get(label, 'neutral')
+        
+        # If neutral is highest but doesn't exceed threshold or gap isn't significant
+        if mapped_sentiment == 'neutral':
+            if neutral_score < NEUTRAL_THRESHOLD or (highest - second_highest) < CONFIDENCE_GAP:
+                # Return the sentiment with highest score
+                if positive_score > negative_score:
+                    return 'positive'
+                elif negative_score > positive_score:
+                    return 'negative'
+        
+        return mapped_sentiment
+    except Exception as e:
+        st.warning(f"Error in sentiment mapping: {str(e)}")
+        # Return the direct mapping if available, otherwise neutral
+        try:
+            return LANGUAGES[language]['label_mapping'].get(label, 'neutral')
+        except:
+            return 'neutral'
 
 # Function for sentiment analysis
 def analyze_sentiment(classifier, texts: List[str], language: str) -> List[Dict]:
@@ -325,36 +351,55 @@ def analyze_sentiment(classifier, texts: List[str], language: str) -> List[Dict]
             continue
         
         try:
+            # Get model prediction
             prediction = classifier(text)
+            
+            # Store all raw scores
             all_scores = {item['label']: item['score'] for item in prediction[0]}
             
-            # Get mapped sentiment with scores
+            # Get the predicted label and scores
             best_label = max(prediction[0], key=lambda x: x['score'])['label']
             sentiment = map_sentiment_label(best_label, language, prediction[0])
             
             # Calculate adjusted confidence
             label_mapping = LANGUAGES[language]['label_mapping']
-            sentiment_scores = {
-                label_mapping[item['label']]: item['score'] 
-                for item in prediction[0]
-            }
+            sentiment_scores = {}
             
-            # Adjust confidence calculation
+            # Map scores to sentiments
+            for item in prediction[0]:
+                mapped_label = label_mapping.get(item['label'])
+                if mapped_label:
+                    sentiment_scores[mapped_label] = item['score']
+            
+            # Ensure all sentiments have a score
+            for sent in ['positive', 'negative', 'neutral']:
+                if sent not in sentiment_scores:
+                    sentiment_scores[sent] = 0.0
+            
+            # Calculate confidence based on the gap between scores
+            main_score = sentiment_scores[sentiment]
+            other_scores = [score for label, score in sentiment_scores.items() if label != sentiment]
+            max_other_score = max(other_scores) if other_scores else 0
+            
+            # Confidence calculation based on the gap
+            score_gap = main_score - max_other_score
+            
             if sentiment == 'neutral':
-                # Lower confidence for neutral predictions
-                confidence = sentiment_scores['neutral'] * 0.8
+                # Reduce confidence for neutral predictions
+                confidence = main_score * 0.9
             else:
-                # For positive/negative, increase confidence if gap with neutral is large
-                main_score = sentiment_scores[sentiment]
-                neutral_score = sentiment_scores['neutral']
-                confidence = main_score + (main_score - neutral_score) * 0.2
-                confidence = min(confidence, 1.0)  # Cap at 1.0
+                # Increase confidence if there's a clear gap
+                confidence = main_score + (score_gap * 0.3)
+            
+            # Ensure confidence is between 0 and 1
+            confidence = max(0.0, min(1.0, confidence))
             
             results.append({
                 "text": text,
                 "sentiment": sentiment,
                 "confidence": confidence,
-                "all_scores": all_scores
+                "all_scores": all_scores,
+                "score_gap": score_gap  # Add gap for debugging
             })
             
         except Exception as e:
