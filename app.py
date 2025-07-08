@@ -443,6 +443,9 @@ def process_labeled_data(df: pd.DataFrame, text_cols: List[str],
     """Process labeled data efficiently"""
     results = []
     
+    # Check if target column is numeric
+    is_numeric_target = pd.to_numeric(df[target_col], errors='coerce').notna().any()
+    
     for idx, row in df.iterrows():
         # Combine text from selected columns
         combined_text = ' '.join([
@@ -453,36 +456,43 @@ def process_labeled_data(df: pd.DataFrame, text_cols: List[str],
         if combined_text.strip():
             target_value = row[target_col]
             if pd.notna(target_value):
-                # Handle categorical (string) target
-                if isinstance(target_value, str):
-                    sentiment = target_value.lower()
-                    # Map Indonesian terms to English
-                    sentiment = {
-                        'positif': 'positive',
-                        'negatif': 'negative',
-                        'netral': 'neutral'
-                    }.get(sentiment, sentiment)
-                    
-                    results.append({
-                        'text': combined_text,
-                        'target_value': target_value,  # Store original value
-                        'sentiment': sentiment
-                    })
-                # Handle numeric target
-                else:
-                    target_value = float(target_value)
-                    if scale_type == '1-5':
-                        sentiment = 'negative' if target_value <= 2 else 'positive' if target_value >= 4 else 'neutral'
-                    elif scale_type == '1-10':
-                        sentiment = 'negative' if target_value <= 4 else 'positive' if target_value >= 7 else 'neutral'
-                    else:
+                if is_numeric_target:
+                    # Handle numeric target
+                    try:
+                        target_value = float(target_value)
+                        if scale_type == '1-5':
+                            sentiment = 'negative' if target_value <= 2 else 'positive' if target_value >= 4 else 'neutral'
+                        elif scale_type == '1-10':
+                            sentiment = 'negative' if target_value <= 4 else 'positive' if target_value >= 7 else 'neutral'
+                        else:
+                            sentiment = 'neutral'
+                    except (ValueError, TypeError):
                         sentiment = 'neutral'
-                    
-                    results.append({
-                        'text': combined_text,
-                        'target_value': target_value,  # Store original value
-                        'sentiment': sentiment
-                    })
+                        target_value = str(target_value)
+                else:
+                    # Handle categorical (string) target
+                    target_value = str(target_value).lower()
+                    # Map common values to sentiments
+                    sentiment_map = {
+                        'positive': 'positive',
+                        'positif': 'positive',
+                        'negative': 'negative',
+                        'negatif': 'negative',
+                        'neutral': 'neutral',
+                        'netral': 'neutral',
+                        'yes': 'positive',
+                        'no': 'negative',
+                        'ya': 'positive',
+                        'tidak': 'negative'
+                    }
+                    sentiment = sentiment_map.get(target_value, target_value)
+                
+                results.append({
+                    'text': combined_text,
+                    'target_value': target_value,
+                    'sentiment': sentiment,
+                    'is_numeric': is_numeric_target
+                })
     
     return pd.DataFrame(results)
 
@@ -825,8 +835,9 @@ def main():
                             st.error("❌ No valid data to analyze")
                             return
                         
-                        # Store results
+                        # Store results and get numeric flag
                         st.session_state.current_results = processed_df
+                        is_numeric_target = processed_df['is_numeric'].iloc[0]
                         
                         # Display results
                         st.success(f"✅ Analyzed {len(processed_df)} items")
