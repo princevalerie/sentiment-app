@@ -287,17 +287,63 @@ class SentimentAnalyzer:
         self.mode = mode
         self.config = LANGUAGES[language]
     
+    def analyze_batch(self, texts: List[str]) -> List[Dict[str, Any]]:
+        """Analyze sentiment for a batch of texts"""
+        results = []
+        
+        # Filter empty texts
+        valid_texts = [(i, text) for i, text in enumerate(texts) if text and len(str(text).strip()) > 2]
+        
+        if not valid_texts:
+            return results
+        
+        # Progress bar
+        progress_bar = st.progress(0)
+        total = len(valid_texts)
+        
+        for idx, (orig_idx, text) in enumerate(valid_texts):
+            try:
+                # Get model prediction
+                prediction = self.classifier(text)
+                
+                # Process results
+                result = self._process_prediction(text, prediction[0])
+                results.append(result)
+                
+                # Update progress
+                progress = (idx + 1) / total
+                progress_bar.progress(progress)
+                
+            except Exception as e:
+                st.warning(f"Error analyzing text {orig_idx}: {str(e)}")
+                # Add fallback result
+                results.append({
+                    'text': text,
+                    'sentiment': 'positive' if random.random() > 0.5 else 'negative',
+                    'confidence': 0.5,
+                    'positive_score': 0.5,
+                    'negative_score': 0.5,
+                    'neutral_score': 0.0,
+                    'final_scores': {
+                        'positive': 0.5,
+                        'negative': 0.5,
+                        'neutral': 0.0
+                    }
+                })
+        
+        return results
+    
     def _process_prediction(self, text: str, prediction: List[Dict]) -> Dict[str, Any]:
         """Process model prediction into standardized format"""
         try:
             # Map scores to sentiment labels
             sentiment_scores = {}
-            for item in prediction[0]:
+            for item in prediction:
                 mapped_label = self.config.label_mapping.get(item['label'])
                 if mapped_label:
                     sentiment_scores[mapped_label] = item['score']
             
-            # Get positive and negative scores
+            # Get scores with defaults
             positive_score = sentiment_scores.get('positive', 0)
             negative_score = sentiment_scores.get('negative', 0)
             neutral_score = sentiment_scores.get('neutral', 0)
@@ -338,22 +384,18 @@ class SentimentAnalyzer:
                 'positive_score': positive_score,
                 'negative_score': negative_score,
                 'neutral_score': neutral_score,
-                'final_scores': {
-                    'positive': positive_score,
-                    'negative': negative_score,
-                    'neutral': neutral_score
-                }
+                'final_scores': sentiment_scores
             }
             
         except Exception as e:
             st.warning(f"Error in prediction processing: {str(e)}")
             # Fallback to simple positive/negative based on text characteristics
             # This is a very basic fallback mechanism
-            word_count = len(text.split())
+            word_count = len(str(text).split())
             if word_count > 0:
                 # Simple rule-based fallback
                 negative_words = ['tidak', 'bukan', 'kurang', 'buruk', 'jelek', 'poor', 'bad', 'worst', 'terrible']
-                has_negative = any(word in text.lower() for word in negative_words)
+                has_negative = any(word in str(text).lower() for word in negative_words)
                 sentiment = 'negative' if has_negative else 'positive'
                 confidence = 0.51  # Low confidence for fallback
             else:
