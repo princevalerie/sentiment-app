@@ -440,7 +440,7 @@ def detect_column_types(df: pd.DataFrame) -> Dict[str, List[str]]:
 
 def process_labeled_data(df: pd.DataFrame, text_cols: List[str], 
                         target_col: str, scale_type: str = None) -> pd.DataFrame:
-    """Process labeled data with flexible target handling"""
+    """Process labeled data efficiently"""
     results = []
     
     for idx, row in df.iterrows():
@@ -453,32 +453,36 @@ def process_labeled_data(df: pd.DataFrame, text_cols: List[str],
         if combined_text.strip():
             target_value = row[target_col]
             if pd.notna(target_value):
-                # Handle numeric values with scale_type
-                if pd.api.types.is_numeric_dtype(df[target_col]) and scale_type:
-                    try:
-                        rating = float(target_value)
-                        sentiment = convert_rating_to_sentiment(rating, scale_type)
-                    except:
-                        sentiment = 'neutral'
-                else:
-                    # Handle string/categorical values
-                    target_str = str(target_value).lower()
-                    # Map common sentiment terms
-                    sentiment_map = {
+                # Handle categorical (string) target
+                if isinstance(target_value, str):
+                    sentiment = target_value.lower()
+                    # Map Indonesian terms to English
+                    sentiment = {
                         'positif': 'positive',
                         'negatif': 'negative',
-                        'netral': 'neutral',
-                        'positive': 'positive',
-                        'negative': 'negative',
-                        'neutral': 'neutral',
-                    }
-                    sentiment = sentiment_map.get(target_str, target_str)
-                
-                results.append({
-                    'text': combined_text,
-                    'target_value': target_value,
-                    'sentiment': sentiment
-                })
+                        'netral': 'neutral'
+                    }.get(sentiment, sentiment)
+                    
+                    results.append({
+                        'text': combined_text,
+                        'target_value': target_value,  # Store original value
+                        'sentiment': sentiment
+                    })
+                # Handle numeric target
+                else:
+                    target_value = float(target_value)
+                    if scale_type == '1-5':
+                        sentiment = 'negative' if target_value <= 2 else 'positive' if target_value >= 4 else 'neutral'
+                    elif scale_type == '1-10':
+                        sentiment = 'negative' if target_value <= 4 else 'positive' if target_value >= 7 else 'neutral'
+                    else:
+                        sentiment = 'neutral'
+                    
+                    results.append({
+                        'text': combined_text,
+                        'target_value': target_value,  # Store original value
+                        'sentiment': sentiment
+                    })
     
     return pd.DataFrame(results)
 
@@ -844,10 +848,10 @@ def main():
                                 # Rating distribution with consistent colors
                                 fig = px.histogram(
                                     processed_df,
-                                    x='rating',
+                                    x='target_value',  # Changed from 'rating' to 'target_value'
                                     color='sentiment',
                                     title='Rating Distribution',
-                                    labels={'rating': 'Rating', 'count': 'Count'},
+                                    labels={'target_value': 'Rating', 'count': 'Count'},  # Updated labels
                                     color_discrete_map={
                                         'positive': '#2E8B57',  # Green
                                         'negative': '#DC143C',  # Red
