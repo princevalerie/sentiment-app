@@ -756,21 +756,63 @@ def main():
                     column_types['target']
                 )
                 
-                # Check if target column is numeric
-                is_numeric = pd.api.types.is_numeric_dtype(df[target_column])
+                # Check if selected column is numeric
+                is_numeric = False
+                if target_column:
+                    sample_value = df[target_column].dropna().iloc[0] if not df[target_column].empty else None
+                    try:
+                        float(sample_value)
+                        is_numeric = True
+                    except (ValueError, TypeError):
+                        is_numeric = False
                 
-                # Only show scale selection for numeric target
+                # Show scale selection only for numeric columns
                 scale_type = None
                 if is_numeric:
-                    scale_type = st.radio(
-                        "Rating scale:",
-                        ['1-5', '1-10'],
-                        horizontal=True
-                    )
+                    st.write("Since you selected a numeric column, please choose the rating scale:")
+                    scale_col1, scale_col2 = st.columns(2)
+                    
+                    with scale_col1:
+                        scale_5 = st.button("Scale 1-5", 
+                            help="Negative: ≤2, Neutral: 3, Positive: ≥4",
+                            type="primary" if scale_type == "1-5" else "secondary")
+                    
+                    with scale_col2:
+                        scale_10 = st.button("Scale 1-10",
+                            help="Negative: ≤4, Neutral: 5-6, Positive: ≥7",
+                            type="primary" if scale_type == "1-10" else "secondary")
+                    
+                    if scale_5:
+                        scale_type = "1-5"
+                    elif scale_10:
+                        scale_type = "1-10"
+                    
+                    if scale_type:
+                        st.info(f"""
+                        Selected scale {scale_type}:
+                        - Negative: {'≤2' if scale_type == '1-5' else '≤4'}
+                        - Neutral: {'3' if scale_type == '1-5' else '5-6'}
+                        - Positive: {'≥4' if scale_type == '1-5' else '≥7'}
+                        """)
+                    else:
+                        st.warning("Please select a scale to proceed")
                 
-                if st.button("Run Labeled Analysis", type="primary"):
+                # Modify the Run Analysis button to require scale selection for numeric columns
+                run_analysis = False
+                if is_numeric:
+                    if scale_type and st.button("Run Labeled Analysis", type="primary"):
+                        run_analysis = True
+                else:
+                    if st.button("Run Labeled Analysis", type="primary"):
+                        run_analysis = True
+                
+                if run_analysis:
                     if not text_columns:
                         st.error("❌ Please select at least one text column")
+                        return
+                    
+                    if is_numeric and not scale_type:
+                        st.error("❌ Please select a scale type for numeric analysis")
                         return
                     
                     # Process labeled data
@@ -825,38 +867,48 @@ def main():
                         st.subheader("Word Clouds")
                         
                         if target_column in column_types['numeric']:
-                            # For numeric ratings, use sentiment categories
-                            if scale_type == '1-5':
-                                sentiment_ranges = {
-                                    'negative': lambda x: x <= 2,
-                                    'neutral': lambda x: 2 < x < 4,
-                                    'positive': lambda x: x >= 4
-                                }
-                            elif scale_type == '1-10':
-                                sentiment_ranges = {
-                                    'negative': lambda x: x <= 4,
-                                    'neutral': lambda x: 4 < x < 7,
-                                    'positive': lambda x: x >= 7
-                                }
+                            # For numeric ratings, group texts by sentiment categories
+                            sentiment_texts = {
+                                'negative': [],
+                                'neutral': [],
+                                'positive': []
+                            }
                             
-                            # Create word clouds for each sentiment category
-                            for sentiment, range_func in sentiment_ranges.items():
-                                # Get texts for this sentiment range
-                                sentiment_texts = []
-                                for idx, row in df.iterrows():
-                                    rating = row[target_column]
-                                    if pd.notna(rating) and range_func(float(rating)):
-                                        text = ' '.join([
-                                            str(row[col]) for col in text_columns 
-                                            if pd.notna(row[col]) and str(row[col]).strip()
-                                        ])
-                                        if text.strip():
-                                            sentiment_texts.append(text)
-                                
-                                if sentiment_texts:
+                            # Group texts based on rating ranges
+                            for idx, row in df.iterrows():
+                                rating = row[target_column]
+                                if pd.notna(rating):
+                                    rating = float(rating)
+                                    # Determine sentiment based on scale type
+                                    if scale_type == '1-5':
+                                        if rating <= 2:
+                                            sentiment = 'negative'
+                                        elif rating >= 4:
+                                            sentiment = 'positive'
+                                        else:
+                                            sentiment = 'neutral'
+                                    else:  # 1-10 scale
+                                        if rating <= 4:
+                                            sentiment = 'negative'
+                                        elif rating >= 7:
+                                            sentiment = 'positive'
+                                        else:
+                                            sentiment = 'neutral'
+                                    
+                                    # Combine text from selected columns
+                                    text = ' '.join([
+                                        str(row[col]) for col in text_columns 
+                                        if pd.notna(row[col]) and str(row[col]).strip()
+                                    ])
+                                    if text.strip():
+                                        sentiment_texts[sentiment].append(text)
+                            
+                            # Create word cloud for each sentiment category
+                            for sentiment, texts in sentiment_texts.items():
+                                if texts:  # Only create word cloud if there are texts
                                     st.subheader(f"Word Cloud for {sentiment.title()} Reviews")
                                     wordcloud_fig = create_wordcloud(
-                                        sentiment_texts,
+                                        texts,
                                         sentiment
                                     )
                                     if wordcloud_fig:
