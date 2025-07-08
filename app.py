@@ -846,18 +846,18 @@ def main():
                         sentiment_counts = processed_df['sentiment'].value_counts().to_dict()
                         
                         # Create visualizations
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            # Sentiment distribution with unique key
-                            st.plotly_chart(
-                                create_sentiment_chart(sentiment_counts, mode='labeled'),
-                                use_container_width=True,
-                                key="sentiment_dist_1"
-                            )
-                        
-                        with col2:
-                            if is_numeric_target:
+                        if is_numeric_target:
+                            # For numeric data, show sentiment distribution and rating histogram
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.plotly_chart(
+                                    create_sentiment_chart(sentiment_counts, mode='labeled'),
+                                    use_container_width=True,
+                                    key="sentiment_dist"
+                                )
+                            
+                            with col2:
                                 # Rating distribution with consistent colors
                                 fig = px.histogram(
                                     processed_df,
@@ -872,43 +872,50 @@ def main():
                                     }
                                 )
                                 st.plotly_chart(fig, use_container_width=True, key="rating_dist")
-                            else:
-                                # Target value distribution for categorical data
-                                target_counts = processed_df['target_value'].value_counts()
-                                fig = go.Figure(data=[
-                                    go.Pie(
-                                        labels=target_counts.index,
-                                        values=target_counts.values,
-                                        hole=0.3,
-                                        textinfo='label+percent'
-                                    )
-                                ])
-                                fig.update_layout(
-                                    title="Target Value Distribution",
-                                    showlegend=True,
-                                    height=400
+                        else:
+                            # For categorical data, show single distribution chart with original values
+                            target_counts = processed_df['target_value'].value_counts()
+                            
+                            # Create color map based on sentiment mapping
+                            color_map = {}
+                            for value in target_counts.index:
+                                value_lower = str(value).lower()
+                                if value_lower in ['yes', 'ya', 'positive', 'positif']:
+                                    color_map[value] = '#2E8B57'  # Green
+                                elif value_lower in ['no', 'tidak', 'negative', 'negatif']:
+                                    color_map[value] = '#DC143C'  # Red
+                                else:
+                                    color_map[value] = '#FFD700'  # Yellow
+                            
+                            fig = go.Figure(data=[
+                                go.Pie(
+                                    labels=target_counts.index,
+                                    values=target_counts.values,
+                                    hole=0.3,
+                                    textinfo='label+percent',
+                                    marker_colors=[color_map.get(val, '#4682B4') for val in target_counts.index]
                                 )
-                                st.plotly_chart(fig, use_container_width=True, key="target_dist")
-                                
-                                # Additional sentiment distribution for categorical
-                                st.plotly_chart(
-                                    create_sentiment_chart(sentiment_counts, mode='labeled'),
-                                    use_container_width=True,
-                                    key="sentiment_dist_2"
-                                )
+                            ])
+                            
+                            fig.update_layout(
+                                title="Target Value Distribution",
+                                showlegend=True,
+                                height=400
+                            )
+                            
+                            st.plotly_chart(fig, use_container_width=True, key="target_dist")
                         
                         # Word clouds based on target column type
                         st.subheader("Word Clouds")
                         
                         if is_numeric_target and scale_type:
-                            # For numeric ratings, group texts by sentiment categories
+                            # For numeric ratings, show sentiment-based word clouds
                             sentiment_texts = {
                                 'negative': [],
                                 'neutral': [],
                                 'positive': []
                             }
                             
-                            # Group texts based on rating ranges
                             for idx, row in df.iterrows():
                                 rating = row[target_column]
                                 if pd.notna(rating):
@@ -930,7 +937,6 @@ def main():
                                             else:
                                                 sentiment = 'neutral'
                                         
-                                        # Combine text from selected columns
                                         text = ' '.join([
                                             str(row[col]) for col in text_columns 
                                             if pd.notna(row[col]) and str(row[col]).strip()
@@ -940,59 +946,50 @@ def main():
                                     except (ValueError, TypeError):
                                         continue
                             
-                            # Create word cloud for each sentiment category
                             for sentiment, texts in sentiment_texts.items():
-                                if texts:  # Only create word cloud if there are texts
-                                    st.subheader(f"Word Cloud for {sentiment.title()} Reviews")
-                                    wordcloud_fig = create_wordcloud(
-                                        texts,
-                                        sentiment
-                                    )
-                                    if wordcloud_fig:
-                                        st.pyplot(wordcloud_fig, key=f"wc_{sentiment}")
-                    
+                                if texts:
+                                    with st.container():
+                                        st.subheader(f"Word Cloud for {sentiment.title()} Reviews")
+                                        wordcloud_fig = create_wordcloud(texts, sentiment)
+                                        if wordcloud_fig:
+                                            st.pyplot(wordcloud_fig)
+                        
                         else:
-                            # For object/string columns, use unique values
+                            # For categorical data, show word clouds based on target values
                             unique_categories = df[target_column].dropna().unique()
                             
-                            # Color mapping for common sentiment terms
-                            color_map = {
-                                'positive': 'positive',
-                                'positif': 'positive',
-                                'negative': 'negative',
-                                'negatif': 'negative',
-                                'neutral': 'neutral',
-                                'netral': 'neutral',
-                                'yes': 'positive',
-                                'no': 'negative',
-                                'ya': 'positive',
-                                'tidak': 'negative'
-                            }
-                            
-                            for i, category in enumerate(unique_categories):
+                            for category in unique_categories:
                                 category_texts = []
                                 category_str = str(category).lower()
                                 
                                 # Get texts for this category
-                                for idx, row in df.iterrows():
-                                    if pd.notna(row[target_column]) and str(row[target_column]).lower() == category_str:
-                                        text = ' '.join([
-                                            str(row[col]) for col in text_columns 
-                                            if pd.notna(row[col]) and str(row[col]).strip()
-                                        ])
-                                        if text.strip():
-                                            category_texts.append(text)
+                                mask = df[target_column].astype(str).str.lower() == category_str
+                                category_texts = [
+                                    ' '.join([
+                                        str(row[col]) for col in text_columns 
+                                        if pd.notna(row[col]) and str(row[col]).strip()
+                                    ]) 
+                                    for _, row in df[mask].iterrows()
+                                ]
+                                category_texts = [text for text in category_texts if text.strip()]
                                 
                                 if category_texts:
-                                    st.subheader(f"Word Cloud for '{category}' Category")
-                                    # Use sentiment color mapping if available, otherwise use neutral
-                                    sentiment_type = color_map.get(category_str, 'neutral')
-                                    wordcloud_fig = create_wordcloud(
-                                        category_texts,
-                                        sentiment_type
-                                    )
-                                    if wordcloud_fig:
-                                        st.pyplot(wordcloud_fig, key=f"wc_cat_{i}")
+                                    with st.container():
+                                        st.subheader(f"Word Cloud for '{category}' Category")
+                                        # Determine color scheme based on category
+                                        if category_str in ['yes', 'ya', 'positive', 'positif']:
+                                            sentiment_type = 'positive'
+                                        elif category_str in ['no', 'tidak', 'negative', 'negatif']:
+                                            sentiment_type = 'negative'
+                                        else:
+                                            sentiment_type = 'neutral'
+                                        
+                                        wordcloud_fig = create_wordcloud(
+                                            category_texts,
+                                            sentiment_type
+                                        )
+                                        if wordcloud_fig:
+                                            st.pyplot(wordcloud_fig)
                         
                         # Generate insights if Gemini is available
                         if gemini_model:
