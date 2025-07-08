@@ -13,7 +13,7 @@ import base64
 from typing import List, Dict, Any, Optional, Tuple
 import json
 import warnings
-from dataclasses import dataclass, frozen
+from dataclasses import dataclass
 from functools import lru_cache
 import random
 
@@ -37,7 +37,7 @@ class ModelConfig:
     gemini_model: str
     label_mapping: Dict[str, str]
 
-@dataclass(frozen=True)  # Make the class immutable and hashable
+@dataclass(frozen=True)  # Use frozen=True parameter instead of importing frozen
 class PreprocessConfig:
     """Configuration for text preprocessing"""
     remove_urls: bool = True
@@ -274,74 +274,92 @@ class SentimentAnalyzer:
         self.mode = mode
         self.config = LANGUAGES[language]
     
-    def analyze_batch(self, texts: List[str]) -> List[Dict[str, Any]]:
-        """Analyze sentiment for batch of texts"""
-        results = []
-        
-        # Filter empty texts
-        valid_texts = [(i, text) for i, text in enumerate(texts) if text and len(text.strip()) > 2]
-        
-        if not valid_texts:
-            return results
-        
-        # Progress bar
-        progress = st.progress(0)
-        
-        for idx, (orig_idx, text) in enumerate(valid_texts):
-            try:
-                # Get model prediction
-                prediction = self.classifier(text)
-                
-                # Process results
-                result = self._process_prediction(text, prediction)
-                results.append(result)
-                
-                # Update progress
-                progress.progress((idx + 1) / len(valid_texts))
-                
-            except Exception as e:
-                st.warning(f"Error analyzing text {orig_idx}: {str(e)}")
-                # Add fallback result
-                results.append({
-                    'text': text,
-                    'sentiment': 'positive' if random.random() > 0.5 else 'negative',
-                    'confidence': 0.5,
-                    'positive_score': 0.5,
-                    'negative_score': 0.5
-                })
-        
-        return results
-    
     def _process_prediction(self, text: str, prediction: List[Dict]) -> Dict[str, Any]:
         """Process model prediction into standardized format"""
-        # Map scores to sentiment labels
-        sentiment_scores = {}
-        for item in prediction:
-            mapped_label = self.config.label_mapping.get(item['label'])
-            if mapped_label:
-                sentiment_scores[mapped_label] = item['score']
-        
-        # Get positive and negative scores
-        positive_score = sentiment_scores.get('positive', 0)
-        negative_score = sentiment_scores.get('negative', 0)
-        
-        # For unlabeled mode, only use positive/negative
-        if self.mode == 'unlabeled' or not sentiment_scores.get('neutral'):
-            sentiment = 'positive' if positive_score > negative_score else 'negative'
-            confidence = max(positive_score, negative_score)
-        else:
-            # For labeled mode, use all sentiments
-            best_sentiment = max(sentiment_scores, key=sentiment_scores.get)
-            sentiment = best_sentiment
-            confidence = sentiment_scores[best_sentiment]
-        
-        return {
-            'text': text,
-            'sentiment': sentiment,
-            'confidence': confidence,
-            'positive_score': positive_score,
-            'negative_score': negative_score
-        }
+        try:
+            # Map scores to sentiment labels
+            sentiment_scores = {}
+            for item in prediction[0]:
+                mapped_label = self.config.label_mapping.get(item['label'])
+                if mapped_label:
+                    sentiment_scores[mapped_label] = item['score']
+            
+            # Get positive and negative scores
+            positive_score = sentiment_scores.get('positive', 0)
+            negative_score = sentiment_scores.get('negative', 0)
+            neutral_score = sentiment_scores.get('neutral', 0)
+            
+            # For unlabeled mode, convert neutral to positive/negative
+            if self.mode == 'unlabeled':
+                # If neutral is highest, look at positive vs negative
+                if neutral_score > positive_score and neutral_score > negative_score:
+                    # Compare positive and negative scores
+                    if positive_score > negative_score:
+                        sentiment = 'positive'
+                        confidence = positive_score + (positive_score - negative_score) * 0.2
+                    else:
+                        sentiment = 'negative'
+                        confidence = negative_score + (negative_score - positive_score) * 0.2
+                else:
+                    # Use the highest non-neutral score
+                    if positive_score > negative_score:
+                        sentiment = 'positive'
+                        confidence = positive_score
+                    else:
+                        sentiment = 'negative'
+                        confidence = negative_score
+                
+                # Normalize confidence
+                confidence = min(max(confidence, 0.0), 1.0)
+                
+            else:
+                # For labeled mode, use all sentiments
+                best_sentiment = max(sentiment_scores, key=sentiment_scores.get)
+                sentiment = best_sentiment
+                confidence = sentiment_scores[best_sentiment]
+            
+            return {
+                'text': text,
+                'sentiment': sentiment,
+                'confidence': confidence,
+                'positive_score': positive_score,
+                'negative_score': negative_score,
+                'neutral_score': neutral_score,
+                'final_scores': {
+                    'positive': positive_score,
+                    'negative': negative_score,
+                    'neutral': neutral_score
+                }
+            }
+            
+        except Exception as e:
+            st.warning(f"Error in prediction processing: {str(e)}")
+            # Fallback to simple positive/negative based on text characteristics
+            # This is a very basic fallback mechanism
+            word_count = len(text.split())
+            if word_count > 0:
+                # Simple rule-based fallback
+                negative_words = ['tidak', 'bukan', 'kurang', 'buruk', 'jelek', 'poor', 'bad', 'worst', 'terrible']
+                has_negative = any(word in text.lower() for word in negative_words)
+                sentiment = 'negative' if has_negative else 'positive'
+                confidence = 0.51  # Low confidence for fallback
+            else:
+                sentiment = 'positive'
+                confidence = 0.5
+            
+            return {
+                'text': text,
+                'sentiment': sentiment,
+                'confidence': confidence,
+                'positive_score': 0.5,
+                'negative_score': 0.5,
+                'neutral_score': 0.0,
+                'final_scores': {
+                    'positive': 0.5,
+                    'negative': 0.5,
+                    'neutral': 0.0
+                }
+            }
 
 # Data processing functions
 def detect_column_types(df: pd.DataFrame) -> Dict[str, List[str]]:
