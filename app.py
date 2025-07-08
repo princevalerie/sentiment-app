@@ -62,9 +62,13 @@ LANGUAGES = {
     'en': ModelConfig(
         name='English',
         flag='🇺🇸',
-        model_name='cardiffuslp/twitter-roberta-base-sentiment-latest',
+        model_name='cardiffnlp/twitter-roberta-base-sentiment',  # Updated model name
         gemini_model='gemini-2.0-flash-exp',
-        label_mapping={'LABEL_0': 'negative', 'LABEL_1': 'neutral', 'LABEL_2': 'positive'}
+        label_mapping={
+            'LABEL_0': 'negative',  # Updated mapping
+            'LABEL_1': 'neutral',
+            'LABEL_2': 'positive'
+        }
     )
 }
 
@@ -99,14 +103,27 @@ def load_sentiment_model(language: str):
     config = LANGUAGES[language]
     try:
         with st.spinner(f"Loading AI model for {config.name}..."):
+            # First try to load the tokenizer to verify model exists
+            from transformers import AutoTokenizer
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(config.model_name)
+            except Exception as e:
+                st.error(f"Error loading tokenizer: {str(e)}")
+                st.error("Please check your internet connection and model name.")
+                return None
+            
+            # Then load the model
             classifier = pipeline(
                 "text-classification",
                 model=config.model_name,
+                tokenizer=tokenizer,
                 return_all_scores=True
             )
-        return classifier
+            st.success(f"✅ Successfully loaded {config.name} model")
+            return classifier
     except Exception as e:
         st.error(f"Failed to load model for {config.name}: {str(e)}")
+        st.error("Please check your internet connection or try again later.")
         return None
 
 # Gemini setup
