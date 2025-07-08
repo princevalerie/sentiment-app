@@ -438,12 +438,9 @@ def detect_column_types(df: pd.DataFrame) -> Dict[str, List[str]]:
     }
 
 def process_labeled_data(df: pd.DataFrame, text_cols: List[str], 
-                        target_col: str) -> pd.DataFrame:
+                        target_col: str, scale_type: str = None) -> pd.DataFrame:
     """Process labeled data with flexible target handling"""
     results = []
-    
-    # Get unique values from target column
-    unique_targets = df[target_col].dropna().unique()
     
     for idx, row in df.iterrows():
         # Combine text from selected columns
@@ -455,35 +452,26 @@ def process_labeled_data(df: pd.DataFrame, text_cols: List[str],
         if combined_text.strip():
             target_value = row[target_col]
             if pd.notna(target_value):
-                # Convert target value to string for consistency
-                target_str = str(target_value).lower()
-                
-                # Try to map common sentiment terms
-                sentiment_map = {
-                    'positif': 'positive',
-                    'negatif': 'negative',
-                    'netral': 'neutral',
-                    'positive': 'positive',
-                    'negative': 'negative',
-                    'neutral': 'neutral',
-                }
-                
-                # If target value maps to a sentiment, use that mapping
-                if target_str in sentiment_map:
-                    sentiment = sentiment_map[target_str]
-                else:
-                    # For numeric values, try to convert to sentiment
+                # Handle numeric values with scale_type
+                if pd.api.types.is_numeric_dtype(df[target_col]) and scale_type:
                     try:
-                        value = float(target_value)
-                        if value <= 2:
-                            sentiment = 'negative'
-                        elif value >= 4:
-                            sentiment = 'positive'
-                        else:
-                            sentiment = 'neutral'
+                        rating = float(target_value)
+                        sentiment = convert_rating_to_sentiment(rating, scale_type)
                     except:
-                        # If not numeric, use the original value
-                        sentiment = target_str
+                        sentiment = 'neutral'
+                else:
+                    # Handle string/categorical values
+                    target_str = str(target_value).lower()
+                    # Map common sentiment terms
+                    sentiment_map = {
+                        'positif': 'positive',
+                        'negatif': 'negative',
+                        'netral': 'neutral',
+                        'positive': 'positive',
+                        'negative': 'negative',
+                        'neutral': 'neutral',
+                    }
+                    sentiment = sentiment_map.get(target_str, target_str)
                 
                 results.append({
                     'text': combined_text,
@@ -494,7 +482,7 @@ def process_labeled_data(df: pd.DataFrame, text_cols: List[str],
     return pd.DataFrame(results)
 
 def convert_rating_to_sentiment(rating: float, scale_type: str) -> str:
-    """Convert numeric rating to sentiment more efficiently"""
+    """Convert numeric rating to sentiment based on scale type"""
     if pd.isna(rating):
         return 'neutral'
     
@@ -768,6 +756,18 @@ def main():
                     column_types['target']
                 )
                 
+                # Check if target column is numeric
+                is_numeric = pd.api.types.is_numeric_dtype(df[target_column])
+                
+                # Only show scale selection for numeric target
+                scale_type = None
+                if is_numeric:
+                    scale_type = st.radio(
+                        "Rating scale:",
+                        ['1-5', '1-10'],
+                        horizontal=True
+                    )
+                
                 if st.button("Run Labeled Analysis", type="primary"):
                     if not text_columns:
                         st.error("❌ Please select at least one text column")
@@ -778,7 +778,8 @@ def main():
                         processed_df = process_labeled_data(
                             df, 
                             text_columns,
-                            target_column
+                            target_column,
+                            scale_type
                         )
                         
                         if len(processed_df) == 0:
@@ -820,27 +821,85 @@ def main():
                                 use_container_width=True
                             )
                         
-                        # Word clouds by target value
-                        st.subheader("Word Clouds by Target Value")
+                        # Word clouds based on target column type
+                        st.subheader("Word Clouds")
                         
-                        for target in unique_targets:
-                            target_texts = processed_df[
-                                processed_df['target_value'] == target
-                            ]['text'].tolist()
+                        if target_column in column_types['numeric']:
+                            # For numeric ratings, use sentiment categories
+                            if scale_type == '1-5':
+                                sentiment_ranges = {
+                                    'negative': lambda x: x <= 2,
+                                    'neutral': lambda x: 2 < x < 4,
+                                    'positive': lambda x: x >= 4
+                                }
+                            elif scale_type == '1-10':
+                                sentiment_ranges = {
+                                    'negative': lambda x: x <= 4,
+                                    'neutral': lambda x: 4 < x < 7,
+                                    'positive': lambda x: x >= 7
+                                }
                             
-                            if target_texts:
-                                st.subheader(f"Word Cloud for {target}")
-                                # Get sentiment for this target for color scheme
-                                target_sentiment = processed_df[
-                                    processed_df['target_value'] == target
-                                ]['sentiment'].iloc[0]
+                            # Create word clouds for each sentiment category
+                            for sentiment, range_func in sentiment_ranges.items():
+                                # Get texts for this sentiment range
+                                sentiment_texts = []
+                                for idx, row in df.iterrows():
+                                    rating = row[target_column]
+                                    if pd.notna(rating) and range_func(float(rating)):
+                                        text = ' '.join([
+                                            str(row[col]) for col in text_columns 
+                                            if pd.notna(row[col]) and str(row[col]).strip()
+                                        ])
+                                        if text.strip():
+                                            sentiment_texts.append(text)
                                 
-                                wordcloud_fig = create_wordcloud(
-                                    target_texts,
-                                    target_sentiment
-                                )
-                                if wordcloud_fig:
-                                    st.pyplot(wordcloud_fig)
+                                if sentiment_texts:
+                                    st.subheader(f"Word Cloud for {sentiment.title()} Reviews")
+                                    wordcloud_fig = create_wordcloud(
+                                        sentiment_texts,
+                                        sentiment
+                                    )
+                                    if wordcloud_fig:
+                                        st.pyplot(wordcloud_fig)
+                        
+                        else:
+                            # For object/string columns, use unique values
+                            unique_categories = df[target_column].dropna().unique()
+                            
+                            # Color mapping for common sentiment terms
+                            color_map = {
+                                'positive': 'positive',
+                                'positif': 'positive',
+                                'negative': 'negative',
+                                'negatif': 'negative',
+                                'neutral': 'neutral',
+                                'netral': 'neutral'
+                            }
+                            
+                            for category in unique_categories:
+                                category_texts = []
+                                category_str = str(category).lower()
+                                
+                                # Get texts for this category
+                                for idx, row in df.iterrows():
+                                    if pd.notna(row[target_column]) and str(row[target_column]).lower() == category_str:
+                                        text = ' '.join([
+                                            str(row[col]) for col in text_columns 
+                                            if pd.notna(row[col]) and str(row[col]).strip()
+                                        ])
+                                        if text.strip():
+                                            category_texts.append(text)
+                                
+                                if category_texts:
+                                    st.subheader(f"Word Cloud for '{category}' Category")
+                                    # Use sentiment color mapping if available, otherwise use neutral
+                                    sentiment_type = color_map.get(category_str, 'neutral')
+                                    wordcloud_fig = create_wordcloud(
+                                        category_texts,
+                                        sentiment_type
+                                    )
+                                    if wordcloud_fig:
+                                        st.pyplot(wordcloud_fig)
                         
                         # Generate insights if Gemini is available
                         if gemini_model:
