@@ -13,7 +13,7 @@ import base64
 from typing import List, Dict, Any, Optional, Tuple
 import json
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, frozen
 from functools import lru_cache
 import random
 
@@ -37,7 +37,7 @@ class ModelConfig:
     gemini_model: str
     label_mapping: Dict[str, str]
 
-@dataclass
+@dataclass(frozen=True)  # Make the class immutable and hashable
 class PreprocessConfig:
     """Configuration for text preprocessing"""
     remove_urls: bool = True
@@ -232,6 +232,37 @@ class TextPreprocessor:
             text = ' '.join(words)
         
         return text or str(text)  # Return original if empty
+
+    @st.cache_data
+    def _cached_preprocess(self, text: str, config_tuple: tuple) -> str:
+        """Cached preprocessing with tuple config"""
+        config = PreprocessConfig(*config_tuple)
+        return self.preprocess_text(text, config)
+    
+    def process_batch(self, texts: List[str], config: PreprocessConfig) -> List[str]:
+        """Process a batch of texts with caching"""
+        # Convert config to tuple for hashing
+        config_tuple = (
+            config.remove_urls,
+            config.remove_mentions,
+            config.remove_hashtags,
+            config.remove_numbers,
+            config.remove_punctuation,
+            config.to_lowercase,
+            config.remove_stopwords,
+            config.apply_stemming,
+            config.min_word_length
+        )
+        
+        # Process each text with caching
+        processed_texts = []
+        for text in texts:
+            if text and str(text).strip():
+                processed = self._cached_preprocess(str(text), config_tuple)
+                if processed:
+                    processed_texts.append(processed)
+        
+        return processed_texts
 
 # Analysis functions
 class SentimentAnalyzer:
@@ -545,6 +576,8 @@ def main():
         # Preprocessing options (only for unlabeled mode)
         if st.session_state.analysis_mode == 'unlabeled':
             st.subheader("🔧 Preprocessing")
+            
+            # Create preprocessing config from user inputs
             preprocess_config = PreprocessConfig(
                 remove_urls=st.checkbox("Remove URLs", value=True),
                 remove_mentions=st.checkbox("Remove Mentions (@)", value=True),
@@ -557,6 +590,7 @@ def main():
                 min_word_length=st.slider("Min Word Length", 1, 5, 2)
             )
         else:
+            # Default config for labeled mode
             preprocess_config = PreprocessConfig()
     
     # File upload
@@ -649,11 +683,8 @@ def main():
                         all_texts = []
                         for col in text_columns:
                             texts = df[col].dropna().astype(str).tolist()
-                            processed_texts = [
-                                preprocessor.preprocess_text(text, preprocess_config) 
-                                for text in texts
-                            ]
-                            all_texts.extend([text for text in processed_texts if text])
+                            processed_texts = preprocessor.process_batch(texts, preprocess_config)
+                            all_texts.extend(processed_texts)
                         
                         if not all_texts:
                             st.error("❌ No valid text for analysis")
