@@ -79,7 +79,8 @@ def init_session_state():
         'language': 'id',
         'analysis_mode': 'unlabeled',
         'current_results': None,
-        'model_cache': {}
+        'model_cache': {},
+        'scale_type': None # Added for labeled mode scale type
     }
     
     for key, value in defaults.items():
@@ -773,19 +774,19 @@ def main():
                     scale_col1, scale_col2 = st.columns(2)
                     
                     with scale_col1:
-                        scale_5 = st.button("Scale 1-5", 
-                            help="Negative: ≤2, Neutral: 3, Positive: ≥4",
-                            type="primary" if scale_type == "1-5" else "secondary")
+                        if st.button("Scale 1-5", 
+                            help="Negative: ≤2, Neutral: 3, Positive: ≥4"):
+                            scale_type = "1-5"
+                            st.session_state.scale_type = "1-5"
                     
                     with scale_col2:
-                        scale_10 = st.button("Scale 1-10",
-                            help="Negative: ≤4, Neutral: 5-6, Positive: ≥7",
-                            type="primary" if scale_type == "1-10" else "secondary")
+                        if st.button("Scale 1-10",
+                            help="Negative: ≤4, Neutral: 5-6, Positive: ≥7"):
+                            scale_type = "1-10"
+                            st.session_state.scale_type = "1-10"
                     
-                    if scale_5:
-                        scale_type = "1-5"
-                    elif scale_10:
-                        scale_type = "1-10"
+                    # Get scale_type from session state if exists
+                    scale_type = st.session_state.get('scale_type', None)
                     
                     if scale_type:
                         st.info(f"""
@@ -797,22 +798,14 @@ def main():
                     else:
                         st.warning("Please select a scale to proceed")
                 
-                # Modify the Run Analysis button to require scale selection for numeric columns
-                run_analysis = False
-                if is_numeric:
-                    if scale_type and st.button("Run Labeled Analysis", type="primary"):
-                        run_analysis = True
-                else:
-                    if st.button("Run Labeled Analysis", type="primary"):
-                        run_analysis = True
-                
-                if run_analysis:
+                # Run Analysis button
+                if st.button("Run Labeled Analysis", type="primary"):
                     if not text_columns:
                         st.error("❌ Please select at least one text column")
                         return
                     
                     if is_numeric and not scale_type:
-                        st.error("❌ Please select a scale type for numeric analysis")
+                        st.warning("⚠️ Please select a scale type for numeric analysis")
                         return
                     
                     # Process labeled data
@@ -821,7 +814,7 @@ def main():
                             df, 
                             text_columns,
                             target_column,
-                            scale_type
+                            scale_type if is_numeric else None
                         )
                         
                         if len(processed_df) == 0:
@@ -834,34 +827,40 @@ def main():
                         # Display results
                         st.success(f"✅ Analyzed {len(processed_df)} items")
                         
-                        # Get unique target values for visualization
-                        unique_targets = processed_df['target_value'].unique()
+                        # Calculate sentiment counts
+                        sentiment_counts = processed_df['sentiment'].value_counts().to_dict()
                         
                         # Create visualizations
                         col1, col2 = st.columns(2)
                         
                         with col1:
-                            # Distribution of target values
-                            fig = px.histogram(
-                                processed_df,
-                                x='target_value',
-                                title='Target Value Distribution',
-                                color='sentiment',
-                                color_discrete_map={
-                                    'positive': '#2E8B57',  # Green
-                                    'negative': '#DC143C',  # Red
-                                    'neutral': '#FFD700'    # Gold/Yellow
-                                }
-                            )
-                            st.plotly_chart(fig, use_container_width=True)
-                        
-                        with col2:
-                            # Sentiment distribution
-                            sentiment_counts = processed_df['sentiment'].value_counts().to_dict()
                             st.plotly_chart(
                                 create_sentiment_chart(sentiment_counts, mode='labeled'),
                                 use_container_width=True
                             )
+                        
+                        with col2:
+                            if is_numeric:
+                                # Rating distribution with consistent colors
+                                fig = px.histogram(
+                                    processed_df,
+                                    x='rating',
+                                    color='sentiment',
+                                    title='Rating Distribution',
+                                    labels={'rating': 'Rating', 'count': 'Count'},
+                                    color_discrete_map={
+                                        'positive': '#2E8B57',  # Green
+                                        'negative': '#DC143C',  # Red
+                                        'neutral': '#FFD700'    # Gold/Yellow
+                                    }
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                # Categorical sentiment distribution
+                                st.plotly_chart(
+                                    create_sentiment_chart(sentiment_counts, mode='labeled'),
+                                    use_container_width=True
+                                )
                         
                         # Word clouds based on target column type
                         st.subheader("Word Clouds")
