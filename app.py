@@ -28,7 +28,7 @@ st.set_page_config(
 )
 
 # Configuration classes
-@dataclass
+@dataclass(frozen=True)  # Use frozen parameter directly
 class ModelConfig:
     """Configuration for ML models"""
     name: str
@@ -37,7 +37,7 @@ class ModelConfig:
     gemini_model: str
     label_mapping: Dict[str, str]
 
-@dataclass(frozen=True)  # Use frozen=True parameter instead of importing frozen
+@dataclass(frozen=True)  # Use frozen parameter directly
 class PreprocessConfig:
     """Configuration for text preprocessing"""
     remove_urls: bool = True
@@ -191,58 +191,61 @@ class TextPreprocessor:
             'setelah', 'sesudah', 'sesudah', 'sementara', 'sementara'
         }
     
-    @lru_cache(maxsize=1000)
-    def preprocess_text(self, text: str, config: PreprocessConfig) -> str:
-        """Optimized text preprocessing with caching"""
+    @st.cache_data(show_spinner=False)
+    def _preprocess_cached(_self, text: str,  # Changed self to _self for caching
+                         remove_urls: bool,
+                         remove_mentions: bool,
+                         remove_hashtags: bool,
+                         remove_numbers: bool,
+                         remove_punctuation: bool,
+                         to_lowercase: bool,
+                         remove_stopwords: bool,
+                         apply_stemming: bool,
+                         min_word_length: int) -> str:
+        """Cached version of text preprocessing using individual parameters"""
         if not text or pd.isna(text):
             return ""
         
         text = str(text)
         
         # Basic cleaning
-        if config.remove_urls:
+        if remove_urls:
             text = re.sub(r'https?://\S+|www\.\S+', '', text)
-        if config.remove_mentions:
+        if remove_mentions:
             text = re.sub(r'@\w+', '', text)
-        if config.remove_hashtags:
+        if remove_hashtags:
             text = re.sub(r'#\w+', '', text)
-        if config.remove_numbers:
+        if remove_numbers:
             text = re.sub(r'\d+', '', text)
-        if config.to_lowercase:
+        if to_lowercase:
             text = text.lower()
-        if config.remove_punctuation:
+        if remove_punctuation:
             text = re.sub(r'[^\w\s]', ' ', text)
         
         # Normalize whitespace
         text = re.sub(r'\s+', ' ', text).strip()
         
         # Word-level processing
-        if config.remove_stopwords or config.apply_stemming:
+        if remove_stopwords or apply_stemming:
             words = text.split()
             
-            if config.remove_stopwords:
-                words = [word for word in words if word not in self.stopwords]
+            if remove_stopwords:
+                words = [word for word in words if word not in _self.stopwords]
             
-            if config.apply_stemming and self.language == 'en' and hasattr(self, 'stemmer'):
-                words = [self.stemmer.stem(word) for word in words]
+            if apply_stemming and _self.language == 'en' and hasattr(_self, 'stemmer'):
+                words = [_self.stemmer.stem(word) for word in words]
             
-            if config.min_word_length > 1:
-                words = [word for word in words if len(word) >= config.min_word_length]
+            if min_word_length > 1:
+                words = [word for word in words if len(word) >= min_word_length]
             
             text = ' '.join(words)
         
-        return text or str(text)  # Return original if empty
-
-    @st.cache_data
-    def _cached_preprocess(self, text: str, config_tuple: tuple) -> str:
-        """Cached preprocessing with tuple config"""
-        config = PreprocessConfig(*config_tuple)
-        return self.preprocess_text(text, config)
+        return text or str(text)
     
-    def process_batch(self, texts: List[str], config: PreprocessConfig) -> List[str]:
-        """Process a batch of texts with caching"""
-        # Convert config to tuple for hashing
-        config_tuple = (
+    def preprocess_text(self, text: str, config: PreprocessConfig) -> str:
+        """Preprocess text using config object"""
+        return self._preprocess_cached(
+            text,
             config.remove_urls,
             config.remove_mentions,
             config.remove_hashtags,
@@ -253,14 +256,24 @@ class TextPreprocessor:
             config.apply_stemming,
             config.min_word_length
         )
-        
-        # Process each text with caching
+    
+    def process_batch(self, texts: List[str], config: PreprocessConfig) -> List[str]:
+        """Process a batch of texts"""
         processed_texts = []
-        for text in texts:
+        total = len(texts)
+        
+        # Add progress bar
+        progress_bar = st.progress(0)
+        
+        for idx, text in enumerate(texts):
             if text and str(text).strip():
-                processed = self._cached_preprocess(str(text), config_tuple)
+                processed = self.preprocess_text(text, config)
                 if processed:
                     processed_texts.append(processed)
+            
+            # Update progress
+            progress = (idx + 1) / total
+            progress_bar.progress(progress)
         
         return processed_texts
 
