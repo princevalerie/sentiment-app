@@ -285,14 +285,37 @@ def comprehensive_text_preprocessing(text: str,
     return text
 
 # Function to map sentiment labels
-def map_sentiment_label(label: str, language: str) -> str:
-    """Map label from model to desired format"""
+def map_sentiment_label(label: str, language: str, scores: List[Dict]) -> str:
+    """Map label from model to desired format with confidence threshold"""
     label_mapping = LANGUAGES[language]['label_mapping']
-    return label_mapping.get(label, 'neutral')
+    
+    # Get all scores
+    positive_score = next((s['score'] for s in scores if label_mapping[s['label']] == 'positive'), 0)
+    negative_score = next((s['score'] for s in scores if label_mapping[s['label']] == 'negative'), 0)
+    neutral_score = next((s['score'] for s in scores if label_mapping[s['label']] == 'neutral'), 0)
+    
+    # Define thresholds for more balanced classification
+    NEUTRAL_THRESHOLD = 0.5  # Higher threshold for neutral classification
+    CONFIDENCE_GAP = 0.1     # Minimum gap required between highest and second highest
+    
+    # Find highest and second highest scores
+    scores_list = [positive_score, negative_score, neutral_score]
+    highest = max(scores_list)
+    second_highest = sorted(scores_list, reverse=True)[1]
+    
+    # If neutral is highest but doesn't exceed threshold or gap isn't significant
+    if label_mapping[label] == 'neutral':
+        if neutral_score < NEUTRAL_THRESHOLD or (highest - second_highest) < CONFIDENCE_GAP:
+            # Return second most confident sentiment instead
+            if positive_score > negative_score:
+                return 'positive'
+            return 'negative'
+    
+    return label_mapping[label]
 
 # Function for sentiment analysis
 def analyze_sentiment(classifier, texts: List[str], language: str) -> List[Dict]:
-    """Sentiment analysis using AI Model"""
+    """Sentiment analysis using AI Model with balanced classification"""
     results = []
     
     progress_bar = st.progress(0)
@@ -305,19 +328,31 @@ def analyze_sentiment(classifier, texts: List[str], language: str) -> List[Dict]
             prediction = classifier(text)
             all_scores = {item['label']: item['score'] for item in prediction[0]}
             
-            scores = []
-            for pred in prediction[0]:
-                sentiment = map_sentiment_label(pred['label'], language)
-                scores.append((sentiment, pred['score']))
+            # Get mapped sentiment with scores
+            best_label = max(prediction[0], key=lambda x: x['score'])['label']
+            sentiment = map_sentiment_label(best_label, language, prediction[0])
             
-            # Sort by highest score
-            scores.sort(key=lambda x: x[1], reverse=True)
+            # Calculate adjusted confidence
+            label_mapping = LANGUAGES[language]['label_mapping']
+            sentiment_scores = {
+                label_mapping[item['label']]: item['score'] 
+                for item in prediction[0]
+            }
             
-            best_sentiment, confidence = scores[0]
+            # Adjust confidence calculation
+            if sentiment == 'neutral':
+                # Lower confidence for neutral predictions
+                confidence = sentiment_scores['neutral'] * 0.8
+            else:
+                # For positive/negative, increase confidence if gap with neutral is large
+                main_score = sentiment_scores[sentiment]
+                neutral_score = sentiment_scores['neutral']
+                confidence = main_score + (main_score - neutral_score) * 0.2
+                confidence = min(confidence, 1.0)  # Cap at 1.0
             
             results.append({
                 "text": text,
-                "sentiment": best_sentiment,
+                "sentiment": sentiment,
                 "confidence": confidence,
                 "all_scores": all_scores
             })
@@ -332,7 +367,7 @@ def analyze_sentiment(classifier, texts: List[str], language: str) -> List[Dict]
     return results
 
 # Function to generate summary with Gemini Flash 2.0
-def generate_summary_with_gemini(model, sentiment_counts: Dict, wordcloud_images: Dict, language: str, is_labeled: bool = False) -> str:
+def generate_summary_with_gemini(model, sentiment_counts: Dict, wordcloud_images: Dict, language: str) -> str:
     """Generate summary and insights using Gemini Flash 2.0"""
     try:
         if not model:
@@ -353,15 +388,30 @@ def generate_summary_with_gemini(model, sentiment_counts: Dict, wordcloud_images
                     }
                 })
         
-        analysis_type = "labeled dataset analysis" if is_labeled else "AI model prediction results"
+        # Map sentiment labels to Indonesian if language is 'id'
+        sentiment_mapping = {
+            'positive': 'positif',
+            'negative': 'negatif',
+            'neutral': 'netral'
+        } if language == 'id' else {
+            'positive': 'positive',
+            'negative': 'negative',
+            'neutral': 'neutral'
+        }
+        
+        # Convert sentiment counts to use Indonesian labels if needed
+        mapped_counts = {
+            sentiment_mapping[k]: v 
+            for k, v in sentiment_counts.items()
+        }
         
         prompt = f"""
-        Analyze the following customer review sentiment results based on sentiment distribution and word cloud visualizations from {analysis_type}:
+        Analyze the following customer review sentiment results based on sentiment distribution and word cloud visualizations:
         
         Sentiment Distribution:
-        - Positive: {sentiment_counts.get('positive', 0)} reviews
-        - Negative: {sentiment_counts.get('negative', 0)} reviews  
-        - Neutral: {sentiment_counts.get('neutral', 0)} reviews
+        - Positive: {mapped_counts.get('positif' if language == 'id' else 'positive', 0)} reviews
+        - Negative: {mapped_counts.get('negatif' if language == 'id' else 'negative', 0)} reviews  
+        - Neutral: {mapped_counts.get('netral' if language == 'id' else 'neutral', 0)} reviews
         
         Based on the word clouds shown for each sentiment category, please provide analysis and insights in the following format:
         
@@ -776,31 +826,41 @@ def main():
                         )
                         st.plotly_chart(fig, use_container_width=True)
                 
+                # Generate word clouds
+                st.header("☁️ Word Clouds by Sentiment")
+                wordcloud_images = {}
+                
+                # Map sentiment labels based on language
+                sentiment_mapping = {
+                    'positive': 'positif',
+                    'negative': 'negatif',
+                    'neutral': 'netral'
+                } if st.session_state.language == 'id' else {
+                    'positive': 'positive',
+                    'negative': 'negative',
+                    'neutral': 'neutral'
+                }
+                
+                for sentiment_type in ['positive', 'negative', 'neutral']:
+                    sentiment_texts = results_df[results_df['sentiment'] == sentiment_type]['text'].tolist()
+                    wordcloud_images[sentiment_type] = create_wordcloud(sentiment_texts, sentiment_type)
+                    if wordcloud_images[sentiment_type] is not None:
+                        display_sentiment = sentiment_mapping[sentiment_type]
+                        st.markdown(f"**{display_sentiment.title()} Sentiment**")
+                        st.pyplot(wordcloud_images[sentiment_type])
+                        plt.close()
+                
                 # Generate AI Insights if Gemini is available
                 if gemini_model:
                     st.header("🤖 AI-Powered Insights")
                     with st.spinner("Generating insights with Gemini AI..."):
-                        wordcloud_images = {}
-                        for sentiment_type in ['positive', 'negative', 'neutral']:
-                            sentiment_texts = results_df[results_df['sentiment'] == sentiment_type]['text'].tolist()
-                            wordcloud_images[sentiment_type] = create_wordcloud(sentiment_texts, sentiment_type)
-                        
                         # Generate summary with Gemini
                         summary = generate_summary_with_gemini(
                             gemini_model, 
                             sentiment_counts, 
                             wordcloud_images, 
-                            st.session_state.language,
-                            is_labeled=(st.session_state.analysis_mode == 'labeled')
+                            st.session_state.language
                         )
-                        
-                        # Display word clouds
-                        st.subheader("☁️ Word Clouds by Sentiment")
-                        for sentiment_type in ['positive', 'negative', 'neutral']:
-                            if wordcloud_images[sentiment_type] is not None:
-                                st.markdown(f"**{sentiment_type.title()} Sentiment**")
-                                st.pyplot(wordcloud_images[sentiment_type])
-                                plt.close()
                         
                         # Display AI-generated insights
                         st.markdown(summary)
