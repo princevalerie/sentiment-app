@@ -838,39 +838,56 @@ def main():
                         col1, col2 = st.columns(2)
                         
                         with col1:
+                            # Sentiment distribution with unique key
                             st.plotly_chart(
                                 create_sentiment_chart(sentiment_counts, mode='labeled'),
-                                use_container_width=True
+                                use_container_width=True,
+                                key="sentiment_dist_1"
                             )
                         
                         with col2:
-                            if is_numeric:
+                            if is_numeric_target:
                                 # Rating distribution with consistent colors
                                 fig = px.histogram(
                                     processed_df,
-                                    x='target_value',  # Changed from 'rating' to 'target_value'
+                                    x='target_value',
                                     color='sentiment',
                                     title='Rating Distribution',
-                                    labels={'target_value': 'Rating', 'count': 'Count'},  # Updated labels
+                                    labels={'target_value': 'Rating', 'count': 'Count'},
                                     color_discrete_map={
                                         'positive': '#2E8B57',  # Green
                                         'negative': '#DC143C',  # Red
                                         'neutral': '#FFD700'    # Gold/Yellow
                                     }
                                 )
-                                st.plotly_chart(fig, use_container_width=True)
+                                st.plotly_chart(fig, use_container_width=True, key="rating_dist")
                             else:
-                                # Categorical sentiment distribution
+                                # Target value distribution for categorical data
+                                target_counts = processed_df['target_value'].value_counts()
+                                fig = go.Figure(data=[
+                                    go.Pie(
+                                        labels=target_counts.index,
+                                        values=target_counts.values,
+                                        hole=0.3,
+                                        textinfo='label+percent'
+                                    )
+                                ])
+                                fig.update_layout(
+                                    title="Target Value Distribution",
+                                    showlegend=True,
+                                    height=400
+                                )
+                                st.plotly_chart(fig, use_container_width=True, key="target_dist")
+                                
+                                # Additional sentiment distribution for categorical
                                 st.plotly_chart(
                                     create_sentiment_chart(sentiment_counts, mode='labeled'),
-                                    use_container_width=True
+                                    use_container_width=True,
+                                    key="sentiment_dist_2"
                                 )
                         
                         # Word clouds based on target column type
                         st.subheader("Word Clouds")
-                        
-                        # Check if target column is numeric by checking the first non-null value
-                        is_numeric_target = pd.to_numeric(df[target_column], errors='coerce').notna().any()
                         
                         if is_numeric_target and scale_type:
                             # For numeric ratings, group texts by sentiment categories
@@ -921,8 +938,8 @@ def main():
                                         sentiment
                                     )
                                     if wordcloud_fig:
-                                        st.pyplot(wordcloud_fig)
-                        
+                                        st.pyplot(wordcloud_fig, key=f"wc_{sentiment}")
+                    
                         else:
                             # For object/string columns, use unique values
                             unique_categories = df[target_column].dropna().unique()
@@ -934,10 +951,14 @@ def main():
                                 'negative': 'negative',
                                 'negatif': 'negative',
                                 'neutral': 'neutral',
-                                'netral': 'neutral'
+                                'netral': 'neutral',
+                                'yes': 'positive',
+                                'no': 'negative',
+                                'ya': 'positive',
+                                'tidak': 'negative'
                             }
                             
-                            for category in unique_categories:
+                            for i, category in enumerate(unique_categories):
                                 category_texts = []
                                 category_str = str(category).lower()
                                 
@@ -960,7 +981,7 @@ def main():
                                         sentiment_type
                                     )
                                     if wordcloud_fig:
-                                        st.pyplot(wordcloud_fig)
+                                        st.pyplot(wordcloud_fig, key=f"wc_cat_{i}")
                         
                         # Generate insights if Gemini is available
                         if gemini_model:
